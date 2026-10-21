@@ -204,7 +204,9 @@ details.help ul { margin: 8px 0 0; padding-left: 20px; color: var(--ink-2); disp
 
 @media (max-width: 560px) {
   .tile .value { font-size: 34px; }
-  .periods button { padding: 0 12px; }
+  .top-actions { width: 100%; flex-wrap: nowrap; }
+  .periods { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); }
+  .periods button { padding: 0 4px; font-size: 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

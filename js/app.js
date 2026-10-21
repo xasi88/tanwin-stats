@@ -451,7 +451,7 @@ function helpCard() {
     <li>Сравнение (▲ и ▼) идёт с таким же отрезком времени прямо перед выбранным. Для «Сегодня» сравнение с полным вчерашним днём, поэтому утром цифра почти всегда ниже.</li>
     <li>Данные приходят из Яндекс.Метрики с опозданием в несколько минут.</li>
   </ul></details>
-  <div class="foot"><span>Счётчик ${COUNTER}</span><button class="link-btn" type="button" id="logout">Отключить ключ на этом устройстве</button></div></section>`;
+  <div class="foot"><span>Счётчик ${COUNTER}</span>${installEvt ? `<button class="btn ghost" type="button" id="install">Поставить значок на устройство</button>` : ""}<button class="link-btn" type="button" id="logout">Отключить ключ на этом устройстве</button></div></section>`;
 }
 
 /* ---------- Запуск ---------- */
@@ -493,7 +493,13 @@ function stamp(at, old) {
   $("#updated").textContent = old ? `Данные от ${s}. Обновляю…` : `Обновлено в ${s}`;
 }
 
+/* Установка значком: Chrome сам предлагает её, кнопка появляется внизу страницы. */
+let installEvt = null;
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; });
+window.addEventListener("appinstalled", () => { installEvt = null; $("#install")?.remove(); });
+
 document.addEventListener("click", (e) => {
+  if (e.target.id === "install" && installEvt) { installEvt.prompt(); installEvt.userChoice.finally(() => { installEvt = null; e.target.remove(); }); }
   if (e.target.id === "refresh" || e.target.closest("#refresh")) start();
   if (e.target.id === "logout") { store.del(K_TOKEN); store.del(K_CACHE); showConnect(); }
 });
