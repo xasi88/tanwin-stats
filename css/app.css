@@ -1,0 +1,211 @@
+/* Цвета TanWin. Тёмная тема по умолчанию (экран OLED), светлая по настройке системы. */
+:root {
+  color-scheme: dark;
+  --bg: #0a0f1f;
+  --card: #141c36;
+  --card-2: #1a2442;
+  --line: #27324f;
+  --grid: #222c48;
+  --ink: #eef2fb;
+  --ink-2: #b9c2da;
+  --muted: #8a94b2;
+  --accent: #2fd3a2;
+  --accent-2: #1fb487;
+  --accent-soft: #123a36;
+  --accent-ink: #062019;
+  --gold: #e8b440;
+  --up-bg: #12352c;
+  --up-ink: #8cf0c8;
+  --down-bg: #3b1d27;
+  --down-ink: #ffb3bf;
+  --shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 8px 24px rgba(0, 0, 0, .25);
+  --r: 18px;
+  --gap: 16px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #fbf7ef;
+    --card: #ffffff;
+    --card-2: #f6f0e4;
+    --line: #e6dccb;
+    --grid: #eee6d8;
+    --ink: #17212b;
+    --ink-2: #44505c;
+    --muted: #6d7782;
+    --accent: #0e9f78;
+    --accent-2: #0a7d5e;
+    --accent-soft: #d9f4ea;
+    --accent-ink: #ffffff;
+    --gold: #b7860b;
+    --up-bg: #d9f4ea;
+    --up-ink: #0a6a50;
+    --down-bg: #fde3e6;
+    --down-ink: #a1263a;
+    --shadow: 0 1px 2px rgba(60, 40, 10, .06), 0 6px 18px rgba(60, 40, 10, .06);
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+button { font: inherit; color: inherit; }
+h1, h2, h3, p { margin: 0; }
+[hidden] { display: none !important; }
+
+/* Шапка */
+.top {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: space-between;
+  padding: 14px max(16px, calc((100vw - 1280px) / 2));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.brand img { border-radius: 10px; flex: none; }
+.brand h1 { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.updated { color: var(--muted); font-size: 13px; min-height: 1.2em; }
+.top-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.periods { display: flex; gap: 4px; padding: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; flex-wrap: wrap; }
+.periods button {
+  min-height: 44px; padding: 0 16px; border: 0; border-radius: 10px; background: transparent;
+  color: var(--ink-2); font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.periods button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+.icon-btn {
+  width: 52px; height: 52px; display: grid; place-items: center; flex: none;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--card); cursor: pointer;
+}
+.icon-btn.spin svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: var(--gap); }
+
+/* Карточки */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 20px; box-shadow: var(--shadow); min-width: 0; }
+.card h2 { font-size: 19px; font-weight: 700; }
+.card .lead { color: var(--ink-2); margin-top: 4px; font-size: 15px; }
+.card-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 16px; }
+
+/* Главная мысль */
+.verdict { display: flex; gap: 16px; align-items: center; background: linear-gradient(135deg, var(--accent-soft), var(--card)); }
+.verdict .big-emoji { font-size: 40px; line-height: 1; flex: none; }
+.verdict h2 { font-size: 22px; }
+.verdict p { color: var(--ink-2); margin-top: 4px; }
+
+/* Плитки с цифрами */
+.tiles { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.tile { display: flex; flex-direction: column; gap: 6px; }
+.tile .label { color: var(--ink-2); font-weight: 600; font-size: 15px; }
+.tile .value { font-size: 40px; font-weight: 750; letter-spacing: -.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.tile .value small { font-size: 20px; font-weight: 650; color: var(--ink-2); margin-left: 2px; }
+.tile .sub { color: var(--ink-2); font-size: 14px; }
+.tile .what { color: var(--muted); font-size: 14px; margin-top: auto; padding-top: 10px; border-top: 1px dashed var(--line); }
+.tile .what b { color: var(--ink-2); font-weight: 600; }
+
+.delta { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 13px; font-weight: 650; width: fit-content; }
+.delta.up { background: var(--up-bg); color: var(--up-ink); }
+.delta.down { background: var(--down-bg); color: var(--down-ink); }
+.delta.same { background: var(--card-2); color: var(--ink-2); }
+
+/* Две колонки на широком экране */
+.cols { display: grid; gap: var(--gap); grid-template-columns: 1fr; }
+@media (min-width: 900px) { .cols { grid-template-columns: 1fr 1fr; } }
+
+/* График по дням */
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; height: 240px; overflow: visible; }
+.chart .gridline { stroke: var(--grid); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chart .bar { fill: var(--accent); }
+.chart .bar.dim { opacity: .45; }
+.chart .hit { fill: transparent; cursor: pointer; }
+.chart .hit:hover + .bar, .chart .bar.on { fill: var(--accent-2); }
+.toggle-table {
+  margin-top: 12px; min-height: 44px; padding: 0 14px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--card-2); color: var(--ink-2); cursor: pointer; font-weight: 600;
+}
+.table-wrap { overflow-x: auto; margin-top: 12px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 14px; }
+th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--muted); font-weight: 600; }
+
+/* Полосы: учёба, источники, устройства */
+.bars { display: grid; gap: 14px; }
+.brow .brow-top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.brow .name { font-weight: 600; }
+.brow .num { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+.brow .num small { color: var(--muted); font-weight: 500; margin-left: 6px; }
+.brow .track { height: 12px; border-radius: 6px; background: var(--card-2); margin-top: 6px; overflow: hidden; }
+.brow .fill { height: 100%; border-radius: 6px; background: var(--accent); min-width: 4px; }
+.brow .hint { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+/* Рекорды */
+.records { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.record { background: var(--card-2); border-radius: 14px; padding: 14px 16px; display: grid; gap: 4px; }
+.record .value { font-size: 28px; font-weight: 750; font-variant-numeric: tabular-nums; color: var(--ink); }
+.record .label { color: var(--ink-2); font-weight: 600; font-size: 14px; }
+.record .what { color: var(--muted); font-size: 13px; }
+.record .mark { width: 28px; height: 4px; border-radius: 2px; background: var(--gold); }
+
+/* Вход */
+.connect { max-width: 680px; margin: 24px auto; display: grid; gap: 18px; }
+.connect h2 { font-size: 24px; }
+.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; counter-reset: s; }
+.steps li { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: start; counter-increment: s; }
+.steps li::before {
+  content: counter(s); width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent); font-weight: 750;
+}
+.steps li p { padding-top: 8px; }
+.btn {
+  min-height: 56px; padding: 0 22px; border-radius: 14px; border: 0; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 17px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px; text-decoration: none;
+}
+.btn.ghost { background: var(--card-2); color: var(--ink); border: 1px solid var(--line); }
+.btn-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn-row .btn { flex: 1 1 220px; }
+textarea {
+  width: 100%; min-height: 64px; border-radius: 14px; border: 1px solid var(--line); background: var(--card-2);
+  color: var(--ink); font: 15px/1.4 ui-monospace, Consolas, monospace; padding: 12px; resize: vertical;
+}
+.note { color: var(--muted); font-size: 14px; }
+.error { color: var(--down-ink); background: var(--down-bg); border-radius: 12px; padding: 10px 14px; }
+
+/* Как считаются цифры */
+details.help summary { cursor: pointer; font-weight: 700; font-size: 18px; min-height: 44px; display: flex; align-items: center; }
+details.help[open] > * + * { margin-top: 10px; }
+details.help ul { margin: 8px 0 0; padding-left: 20px; color: var(--ink-2); display: grid; gap: 8px; }
+.foot { display: flex; gap: 12px; flex-wrap: wrap; justify-content: space-between; align-items: center; color: var(--muted); font-size: 14px; }
+.link-btn { background: none; border: 0; color: var(--muted); text-decoration: underline; cursor: pointer; min-height: 44px; padding: 0 4px; }
+
+/* Подсказка у графика */
+.tip {
+  position: fixed; z-index: 20; pointer-events: none; padding: 8px 12px; border-radius: 10px;
+  background: var(--ink); color: var(--bg); font-size: 14px; line-height: 1.35; box-shadow: 0 6px 20px rgba(0, 0, 0, .3);
+  max-width: 240px; font-variant-numeric: tabular-nums;
+}
+.tip b { display: block; }
+
+.skeleton { min-height: 120px; background: linear-gradient(90deg, var(--card) 0%, var(--card-2) 50%, var(--card) 100%); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+@media (max-width: 560px) {
+  .tile .value { font-size: 34px; }
+  .periods button { padding: 0 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
