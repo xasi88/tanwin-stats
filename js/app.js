@@ -11,7 +11,7 @@ const K_TOKEN = "tws-token", K_CACHE = "tws-cache2", K_PERIOD = "tws-period";
 /* Цели TanWin (идентификаторы из js/metrika.js приложения) человеческими словами. */
 const GOALS = {
   onboard_started: { name: "Начали знакомство", hint: "Нажали «Начать» на первом экране." },
-  onboarded: { name: "Прошли знакомство", hint: "Дошли до конца первых экранов и выбрали, с чего начать." },
+  onboarded: { name: "Прошли знакомство", hint: "Дошли до конца первых экранов. Это делают только новые: кто вернулся, знакомство не проходит." },
   onboard_skipped: { name: "Пропустили знакомство", hint: "Нажали «Пропустить» на первых экранах." },
   lesson_started: { name: "Открыли урок", hint: "Начали обычный урок." },
   lesson_done: { name: "Прошли урок", hint: "Довели урок до конца." },
@@ -58,7 +58,8 @@ function dur(sec) {
   sec = Math.round(sec || 0);
   if (sec < 60) return `${sec} с`;
   const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
-  if (d || h) return `${num(d * 24 + h)} ч${m ? ` ${m} мин` : ""}`;
+  if (d || h >= 10) return `${num(d * 24 + h)} ч`;
+  if (h) return `${h} ч${m ? ` ${m} мин` : ""}`;
   return s && m < 10 ? `${m} мин ${s} с` : `${m} мин`;
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -113,12 +114,14 @@ async function load(period) {
   const counter = await api(`/management/v1/counter/${COUNTER}`).catch(() => null);
   const created = counter?.counter?.create_time?.slice(0, 10);
   const r = range(period, created);
+  if (created && r.prev1 && r.prev1 < created) { delete r.prev1; delete r.prev2; }
   const goalsRes = await api(`/management/v1/counter/${COUNTER}/goals`).catch(() => ({ goals: [] }));
   const goals = (goalsRes.goals || []).map((g) => ({ id: g.id, name: g.name, key: g.conditions?.[0]?.url || "" }));
 
   const goalMetrics = goals.slice(0, 20).map((g) => `ym:s:goal${g.id}users`);
   const by = period.id === "all" ? "week" : "day";
-  const chartFrom = period.id === "today" ? ymd(shiftDays(new Date(), -13)) : r.date1;
+  let chartFrom = period.id === "today" ? ymd(shiftDays(new Date(), -13)) : r.date1;
+  if (created && chartFrom < created) chartFrom = created;
 
   const jobs = {
     now: stat({ metrics: MAIN, date1: r.date1, date2: r.date2 }),
@@ -257,7 +260,7 @@ function tile({ label, value, unit = "", sub = "", deltaHtml = "", what, why }) 
 
 function render(d) {
   const [users, visits, newUsers, avgDur, pageviews, bounce] = totals(d.now);
-  const prev = d.prev ? totals(d.prev) : [];
+  const prev = d.prev && totals(d.prev)[0] > 0 ? totals(d.prev) : [];
   const v = verdict(d);
   const totalTime = (avgDur || 0) * (visits || 0);
   const back = Math.max(0, (users || 0) - (newUsers || 0));
@@ -426,7 +429,7 @@ function screensCard(d) {
 function otherGoalsCard(d, users) {
   if (!d.goals?.length || !d.goalStats) return "";
   const g = goalUsers(d);
-  const rows = Object.entries(g).filter(([k]) => !PATH.includes(k)).sort((a, b) => b[1].users - a[1].users);
+  const rows = Object.entries(g).filter(([k, x]) => !PATH.includes(k) && (GOALS[k] || x.users > 0)).sort((a, b) => b[1].users - a[1].users);
   if (!rows.length) return "";
   const max = Math.max(1, ...rows.map(([, x]) => x.users));
   return `<section class="card"><div class="card-head"><div><h2>Что ещё делают</h2>

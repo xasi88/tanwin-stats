@@ -1,6 +1,6 @@
 /* Работа без сети: страница открывается из памяти, цифры берутся из последней загрузки.
    Сначала сеть, потом память: так новая версия страницы приходит сразу. */
-const CACHE = "tws-v2";
+const CACHE = "tws-v3";
 const FILES = ["./", "index.html", "css/app.css", "js/app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -13,7 +13,7 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request).then((r) => {
+    fetch(e.request.url, { cache: "no-cache", credentials: "same-origin" }).then((r) => {
       if (r.ok) { const copy = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
       return r;
     }).catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match("./")))
