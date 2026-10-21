@@ -58,8 +58,7 @@ function dur(sec) {
   sec = Math.round(sec || 0);
   if (sec < 60) return `${sec} с`;
   const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
-  if (d) return `${d} д ${h} ч`;
-  if (h) return `${h} ч ${m} мин`;
+  if (d || h) return `${num(d * 24 + h)} ч${m ? ` ${m} мин` : ""}`;
   return s && m < 10 ? `${m} мин ${s} с` : `${m} мин`;
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -113,7 +112,7 @@ async function load(period) {
     now: stat({ metrics: MAIN, date1: r.date1, date2: r.date2 }),
     prev: r.prev1 ? stat({ metrics: MAIN, date1: r.prev1, date2: r.prev2 }) : null,
     days: api("/stat/v1/data/bytime", { ids: COUNTER, lang: "ru", accuracy: "full", metrics: "ym:s:users,ym:s:visits,ym:s:newUsers", group: by, date1: chartFrom, date2: r.date2 }),
-    goals: goalMetrics.length ? stat({ metrics: goalMetrics.join(","), date1: r.date1, date2: r.date2 }) : null,
+    goalStats: goalMetrics.length ? stat({ metrics: goalMetrics.join(","), date1: r.date1, date2: r.date2 }) : null,
     sources: stat({ dimensions: "ym:s:lastTrafficSource", metrics: "ym:s:users", sort: "-ym:s:users", limit: 7, date1: r.date1, date2: r.date2 }),
     devices: stat({ dimensions: "ym:s:deviceCategory", metrics: "ym:s:users", sort: "-ym:s:users", limit: 5, date1: r.date1, date2: r.date2 }),
     screens: stat({ dimensions: "ym:pv:title", metrics: "ym:pv:pageviews,ym:pv:users", sort: "-ym:pv:pageviews", limit: 8, date1: r.date1, date2: r.date2 }),
@@ -337,7 +336,7 @@ function niceStep(max) {
 }
 
 function goalUsers(d) {
-  const vals = totals(d.goals);
+  const vals = totals(d.goalStats);
   const map = {};
   d.goals.slice(0, 20).forEach((g, i) => { map[g.key] = { users: vals[i] || 0, name: g.name }; });
   return map;
@@ -353,7 +352,7 @@ function barRow(name, value, base, hint, note = "") {
 }
 
 function pathCard(d, users) {
-  if (!d.goals || !d.goals.length) return errCard("Путь ученика", d.errors.goals || "В Метрике пока нет целей TanWin.");
+  if (!d.goals?.length || !d.goalStats) return errCard("Путь ученика", d.errors.goalStats || "В Метрике пока нет целей TanWin.");
   const g = goalUsers(d);
   const rows = [barRow("Открыли TanWin", users, users, "Все люди за период.", "100%")];
   for (const key of PATH) {
@@ -404,7 +403,7 @@ function screensCard(d) {
 }
 
 function otherGoalsCard(d, users) {
-  if (!d.goals?.length) return "";
+  if (!d.goals?.length || !d.goalStats) return "";
   const g = goalUsers(d);
   const rows = Object.entries(g).filter(([k]) => !PATH.includes(k)).sort((a, b) => b[1].users - a[1].users);
   if (!rows.length) return "";
