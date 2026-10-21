@@ -6,7 +6,7 @@ const COUNTER = 113307386;
 const CLIENT_ID = "3657b17d5af3451b88e8e4331486f614"; // приложение «Статистика TanWin» на oauth.yandex.ru, Яндекс возвращает ключ на адрес сайта
 const AUTH_URL = `https://oauth.yandex.ru/authorize?response_type=token&client_id=${CLIENT_ID}`;
 const API = "https://api-metrika.yandex.net";
-const K_TOKEN = "tws-token", K_CACHE = "tws-cache", K_PERIOD = "tws-period";
+const K_TOKEN = "tws-token", K_CACHE = "tws-cache2", K_PERIOD = "tws-period";
 
 /* Цели TanWin (идентификаторы из js/metrika.js приложения) человеческими словами. */
 const GOALS = {
@@ -68,18 +68,30 @@ const dayName = (s) => new Date(s + "T12:00:00").toLocaleDateString("ru-RU", { d
 
 /* ---------- API Метрики ---------- */
 class AuthError extends Error {}
+/* Метрика отвечает не больше чем на 3 запроса одного человека сразу. Остальные ждут в очереди. */
+let active = 0;
+const waiting = [];
+async function slot(fn) {
+  if (active >= 3) await new Promise((r) => waiting.push(r));
+  active++;
+  try { return await fn(); } finally { active--; waiting.shift()?.(); }
+}
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 async function api(path, params = {}) {
   const token = store.get(K_TOKEN);
   if (!token) throw new AuthError("нет ключа");
   const url = new URL(API + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  let r;
-  try { r = await fetch(url, { headers: { Authorization: "OAuth " + token } }); }
-  catch { throw new Error("Нет связи с Метрикой. Проверь интернет."); }
-  if (r.status === 401 || r.status === 403) throw new AuthError("ключ не подходит");
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.message || `Метрика ответила ошибкой ${r.status}`);
-  return body;
+  for (let attempt = 0; ; attempt++) {
+    let r;
+    try { r = await slot(() => fetch(url, { headers: { Authorization: "OAuth " + token } })); }
+    catch { throw new Error("Нет связи с Метрикой. Проверь интернет."); }
+    if (r.status === 401 || r.status === 403) throw new AuthError("ключ не подходит");
+    const body = await r.json().catch(() => ({}));
+    if (r.status === 429 && attempt < 3) { await pause(1200 * (attempt + 1)); continue; }
+    if (!r.ok) throw new Error(body.message || `Метрика ответила ошибкой ${r.status}`);
+    return body;
+  }
 }
 const stat = (params) => api("/stat/v1/data", { ids: COUNTER, lang: "ru", accuracy: "full", ...params });
 const totals = (res) => res.totals || [];
@@ -116,9 +128,8 @@ async function load(period) {
     sources: stat({ dimensions: "ym:s:lastTrafficSource", metrics: "ym:s:users", sort: "-ym:s:users", limit: 7, date1: r.date1, date2: r.date2 }),
     devices: stat({ dimensions: "ym:s:deviceCategory", metrics: "ym:s:users", sort: "-ym:s:users", limit: 5, date1: r.date1, date2: r.date2 }),
     screens: stat({ dimensions: "ym:pv:title", metrics: "ym:pv:pageviews,ym:pv:users", sort: "-ym:pv:pageviews", limit: 8, date1: r.date1, date2: r.date2 }),
-    people: stat({ dimensions: "ym:s:clientID", metrics: "ym:s:visits,ym:s:sumVisitDuration", sort: "-ym:s:visits", limit: 1, date1: r.date1, date2: r.date2 }),
-    longest: stat({ dimensions: "ym:s:clientID", metrics: "ym:s:sumVisitDuration,ym:s:visits", sort: "-ym:s:sumVisitDuration", limit: 1, date1: r.date1, date2: r.date2 }),
-    visitsDist: stat({ dimensions: "ym:s:userVisitsInterval", metrics: "ym:s:users", sort: "ym:s:userVisitsInterval", limit: 20, date1: r.date1, date2: r.date2 }),
+    /* Каждый человек (браузер) отдельно: заходы и время. Отсюда рекорды и «сколько раз заходили». */
+    people: stat({ dimensions: "ym:s:clientID", metrics: "ym:s:visits,ym:s:sumVisitDuration", sort: "-ym:s:visits", limit: 10000, date1: r.date1, date2: r.date2 }),
   };
   const keys = Object.keys(jobs);
   const settled = await Promise.allSettled(keys.map((k) => jobs[k]));
@@ -127,7 +138,20 @@ async function load(period) {
     if (s.status === "fulfilled") out[keys[i]] = s.value;
     else { if (s.reason instanceof AuthError) throw s.reason; out.errors[keys[i]] = String(s.reason?.message || s.reason); }
   });
+  if (out.people) { out.peopleSum = summarizePeople(out.people.data || []); delete out.people; }
   return out;
+}
+
+/* Сводка по людям: рекорды и сколько раз заходили. Номера браузеров не сохраняются. */
+function summarizePeople(rows) {
+  const s = { count: rows.length, maxVisits: 0, maxTime: 0, buckets: [0, 0, 0, 0] };
+  for (const r of rows) {
+    const [visits, time] = r.metrics;
+    s.maxVisits = Math.max(s.maxVisits, visits);
+    s.maxTime = Math.max(s.maxTime, time);
+    s.buckets[visits <= 1 ? 0 : visits <= 3 ? 1 : visits <= 7 ? 2 : 3]++;
+  }
+  return s;
 }
 
 /* ---------- Экран входа ---------- */
@@ -367,21 +391,18 @@ function pathCard(d, users) {
 
 function recordsCard(d, users) {
   const items = [];
-  const top = d.people?.data?.[0];
-  if (top) items.push({ value: num(top.metrics[0]), label: "Больше всех заходов у одного человека", what: `Этот человек открывал TanWin ${num(top.metrics[0])} ${plural(top.metrics[0], "раз", "раза", "раз")} за период.` });
-  const longest = d.longest?.data?.[0];
-  if (longest) items.push({ value: dur(longest.metrics[0]), label: "Больше всех времени у одного человека", what: "Столько провёл в TanWin самый усердный ученик за период." });
-  const dist = d.visitsDist?.data;
-  if (dist?.length) {
-    const many = dist.filter((r) => /^(\d+)/.test(r.dimensions[0].name) && parseInt(r.dimensions[0].name, 10) >= 3).reduce((a, r) => a + r.metrics[0], 0);
-    if (many) items.push({ value: num(many), label: "Заходили 3 раза и больше", what: "Это те, кто возвращается. Самые ценные ученики." });
-  }
-  const [, visits, newUsers] = totals(d.now);
-  if (users) items.push({ value: `${Math.round(Math.max(0, users - newUsers) / users * 100)}%`, label: "Вернулись снова", what: "Доля людей, которые уже бывали в TanWin раньше." });
+  const p = d.peopleSum;
+  const [, visits, newUsers, avgDur] = totals(d.now);
+  if (p?.maxVisits) items.push({ value: num(p.maxVisits), label: "Больше всех заходов у одного человека", what: `Самый частый ученик открыл TanWin ${num(p.maxVisits)} ${plural(p.maxVisits, "раз", "раза", "раз")} за период.` });
+  if (p?.maxTime) items.push({ value: dur(p.maxTime), label: "Больше всех времени у одного человека", what: "Столько провёл в TanWin самый усердный ученик за период." });
+  if (users) items.push({ value: dur((avgDur || 0) * (visits || 0) / users), label: "Время на одного человека", what: "Сколько в среднем провёл в TanWin один человек за период." });
+  if (users) items.push({ value: `${Math.round(Math.max(0, users - newUsers) / users * 100)}%`, label: "Бывали раньше", what: "Доля людей, которые уже открывали TanWin до этого периода." });
   if (!items.length) return errCard("Рекорды", d.errors.people || "Нет данных.");
+  const dist = p?.count ? `<h3 class="sub-h">Сколько раз заходили за период</h3><div class="bars">${[["1 раз", "Открыли и больше не вернулись."], ["2-3 раза", ""], ["4-7 раз", ""], ["8 раз и больше", "Постоянные ученики."]]
+    .map(([name, hint], i) => barRow(name, p.buckets[i], Math.max(...p.buckets), hint, `${Math.round(p.buckets[i] / p.count * 100)}%`)).join("")}</div>` : "";
   return `<section class="card"><div class="card-head"><div><h2>Рекорды и верность</h2>
     <p class="lead">Самые активные ученики и те, кто возвращается. Зачем: видно, есть ли у TanWin постоянные ученики.</p></div></div>
-    <div class="records">${items.map((x) => `<div class="record"><span class="mark" aria-hidden="true"></span><span class="value">${x.value}</span><span class="label">${esc(x.label)}</span><span class="what">${esc(x.what)}</span></div>`).join("")}</div></section>`;
+    <div class="records">${items.map((x) => `<div class="record"><span class="mark" aria-hidden="true"></span><span class="value">${x.value}</span><span class="label">${esc(x.label)}</span><span class="what">${esc(x.what)}</span></div>`).join("")}</div>${dist}</section>`;
 }
 
 function listCard(title, lead, res, metric) {
