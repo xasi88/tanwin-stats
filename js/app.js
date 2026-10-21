@@ -119,7 +119,7 @@ async function load(period) {
   const goals = (goalsRes.goals || []).map((g) => ({ id: g.id, name: g.name, key: g.conditions?.[0]?.url || "" }));
 
   const goalMetrics = goals.slice(0, 20).map((g) => `ym:s:goal${g.id}users`);
-  const by = period.id === "all" ? "week" : "day";
+  const by = (new Date(r.date2) - new Date(r.date1)) / 864e5 > 90 ? "week" : "day"; // недели, только когда дней много
   let chartFrom = period.id === "today" ? ymd(shiftDays(new Date(), -13)) : r.date1;
   if (created && chartFrom < created) chartFrom = created;
 
