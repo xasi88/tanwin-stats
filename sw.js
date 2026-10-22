@@ -1,6 +1,6 @@
 /* Работа без сети: страница открывается из памяти, цифры берутся из последней загрузки.
    Сначала сеть, потом память: так новая версия страницы приходит сразу. */
-const CACHE = "tws-v4";
+const CACHE = "tws-v5";
 const FILES = ["./", "index.html", "css/app.css", "js/app.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {

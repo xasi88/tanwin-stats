@@ -92,6 +92,8 @@ function dur(sec) {
   return s && m < 10 ? `${m} мин ${s} с` : `${m} мин`;
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+/* Большая цифра: слова («мин», «ч») мельче самих чисел. */
+const big = (v) => esc(v).replace(/\p{L}+/gu, (w) => `<small>${w}</small>`);
 /* Время по часам счётчика (Москва), вида «2026-10-22 21:56:00»: так его понимает фильтр Метрики. */
 let TZ;
 const clock = (d) => d.toLocaleString("sv-SE", TZ ? { timeZone: TZ } : {});
@@ -245,6 +247,7 @@ function showConnect(problem) {
         <textarea id="tokenBox" placeholder="Ключ из Яндекса" autocomplete="off" spellcheck="false" aria-label="Ключ из Яндекса"></textarea>
       </details>
     </section>`;
+  motion("connect");
   const box = $("#tokenBox");
   const accept = async (raw) => {
     const token = extractToken(raw);
@@ -335,14 +338,14 @@ function verdictCard(d) {
   const v = verdict(d);
   return `<section class="card verdict ${v.tone}">
     <div class="v-head"><span class="sign" aria-hidden="true">${v.sign}</span><div><h2>${esc(v.title)}</h2><p>${esc(v.text)}</p></div></div>
-    ${v.chips.length ? `<div class="chips">${v.chips.map((x) => `<div class="chip ${x.c?.tone || ""}"><span class="chip-l">${x.label}</span><b>${x.value}</b>${badge(x.c)}</div>`).join("")}</div>` : ""}
+    ${v.chips.length ? `<div class="chips">${v.chips.map((x) => `<div class="chip ${x.c?.tone || ""}"><span class="chip-l">${x.label}</span><b data-num>${big(x.value)}</b>${badge(x.c)}</div>`).join("")}</div>` : ""}
   </section>`;
 }
 
 function tile({ label, value, unit = "", sub = "", c = null, was = "", what, why }) {
   return `<article class="card tile ${c?.tone || ""}">
     <span class="label">${label}</span>
-    <span class="value">${value}${unit ? `<small>${unit}</small>` : ""}</span>
+    <span class="value" data-num>${big(value)}${unit ? `<small>${unit}</small>` : ""}</span>
     ${c ? `<span class="cmp">${badge(c)}<span class="was">${was}</span></span>` : ""}
     ${sub ? `<span class="sub">${sub}</span>` : ""}
     <p class="what">${what}${why ? ` <b>Зачем:</b> ${why}` : ""}</p>
@@ -356,7 +359,7 @@ function render(d) {
   const back = Math.max(0, (users || 0) - (newUsers || 0));
   const has = prev.length > 0;
 
-  const html = [verdictCard(d)];
+  const html = [verdictCard(d), tapeLine(d), tag("Цифры", "pink")];
   html.push(`<section class="tiles">
     ${tile({ label: "Люди", value: num(users), c: has && change(users, prev[0]), was: `было ${num(prev[0])}`, sub: `новых ${num(newUsers)}, вернулись ${num(back)}`,
       what: "Сколько разных людей открыли TanWin. Каждый считается один раз, даже если заходил много раз.", why: "главная цифра роста." })}
@@ -368,15 +371,34 @@ function render(d) {
       what: "Сколько времени все люди вместе провели в TanWin.", why: "это общий труд учеников за период." })}
   </section>`);
 
-  html.push(chartCard(d));
-  html.push(`<div class="cols">${pathCard(d, users, newUsers)}${recordsCard(d, users)}</div>`);
-  html.push(`<div class="cols">${sectionsCard(d, users)}${moreCard(d)}</div>`);
-  html.push(`<div class="cols">${screensCard(d)}${otherGoalsCard(d, users)}</div>`);
-  html.push(`<div class="cols">${listCard("Откуда приходят", "Последний источник перед заходом. Зачем: видно, какая реклама и какие ссылки работают.", d.sources)}
+  html.push(tag("По дням", "sky"), chartCard(d));
+  html.push(tag("Ученики"), `<div class="cols">${pathCard(d, users, newUsers)}${recordsCard(d, users)}</div>`);
+  html.push(tag("Разделы", "pink"), `<div class="cols">${sectionsCard(d, users)}${moreCard(d)}</div>`);
+  html.push(tag("Что делают", "sky"), `<div class="cols">${screensCard(d)}${otherGoalsCard(d, users)}</div>`);
+  html.push(tag("Откуда"), `<div class="cols">${listCard("Откуда приходят", "Последний источник перед заходом. Зачем: видно, какая реклама и какие ссылки работают.", d.sources)}
     ${listCard("С чего заходят", "Телефон, планшет или компьютер. Зачем: под что в первую очередь делать TanWin удобным.", d.devices)}</div>`);
   html.push(helpCard());
   app.innerHTML = html.join("");
+  motion(d.period);
   wireChart(d);
+}
+
+/* Надпись-граффити над разделом. */
+const tag = (text, color = "") => `<p class="tag-word ${color}" aria-hidden="true">${esc(text)}</p>`;
+
+/* Бегущая лента: главные цифры периода. Текст повторён, чтобы лента шла без шва. */
+function tapeLine(d) {
+  const [users, visits, newUsers, avgDur] = totals(d.now);
+  const done = goalUsers(d).lesson_done?.users;
+  const words = [{ today: "Сегодня", week: "7 дней", month: "30 дней", all: "Всё время" }[d.period]];
+  if (users) {
+    words.push(people(users), `${num(visits)} ${plural(visits, "заход", "захода", "заходов")}`, `${num(newUsers)} ${plural(newUsers, "новый", "новых", "новых")}`);
+    if (done) words.push(`${num(done)} ${plural(done, "прошёл урок", "прошли урок", "прошли урок")}`);
+    words.push(`${dur(avgDur * visits)} учёбы`);
+  } else words.push("пока тихо", "ждём учеников");
+  const run = words.map((w) => `<span>${esc(w)}</span><i>✦</i>`).join("").repeat(3);
+  const drips = [[8, 30], [23, 52], [41, 22], [58, 44], [77, 28], [92, 40]].map(([x, h]) => `<i style="--x:${x}%;--h:${h}px"></i>`).join("");
+  return `<div class="tape" aria-hidden="true"><div class="tape-band"><div class="tape-track" id="tape">${run}${run}</div></div><div class="drips">${drips}</div></div>`;
 }
 
 const ghostWord = (d) => ({ week: "неделей раньше", month: "30 днями раньше" })[d.period];
@@ -406,7 +428,7 @@ function wireChart(d) {
   const s = seriesOf(d.days);
   const ps = d.prevDays ? seriesOf(d.prevDays) : [];
   const today = d.range.date2;
-  const W = Math.max(320, el.clientWidth), H = 240, padL = 36, padB = 26, padT = 8;
+  const W = Math.max(320, el.clientWidth), H = 250, padL = 36, padB = 26, padT = 10;
   const max = Math.max(1, ...s.map((x) => x.users), ...ps.map((x) => x.users));
   const step = niceStep(max);
   const top = Math.ceil(max / step) * step;
@@ -423,9 +445,11 @@ function wireChart(d) {
     const yTop = padT + ih - h;
     const path = h ? `M${x},${padT + ih} V${yTop + r} Q${x},${yTop} ${x + r},${yTop} H${x + w - r} Q${x + w},${yTop} ${x + w},${yTop + r} V${padT + ih} Z` : "";
     const part = d.by === "day" && p.from === today ? " part" : "";
-    const ghost = ps[i] ? `<line class="ghost" x1="${x + 1}" x2="${x + w - 1}" y1="${y(ps[i].users)}" y2="${y(ps[i].users)}"/>` : "";
+    const order = `style="--i:${(i * 30 / s.length).toFixed(1)}"`; // столбики растут по очереди, весь график за одно время
+    const gl = (cls) => `<line class="${cls}" ${order} x1="${x + 1}" x2="${x + w - 1}" y1="${y(ps[i].users)}" y2="${y(ps[i].users)}"/>`;
+    const ghost = ps[i] ? gl("ghost-o") + gl("ghost") : "";
     const label = i % labelEvery === 0 || i === s.length - 1 ? `<text class="axis" x="${x + w / 2}" y="${H - 6}" text-anchor="middle">${dayName(p.from)}</text>` : "";
-    return `<rect class="hit" data-i="${i}" x="${padL + i * bw}" y="${padT}" width="${bw}" height="${ih}"/><path class="bar${part}" d="${path}"/>${ghost}${label}`;
+    return `<rect class="hit" data-i="${i}" x="${padL + i * bw}" y="${padT}" width="${bw}" height="${ih}"/><path class="bar${part}" ${order} d="${path}"/>${ghost}${label}`;
   }).join("");
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Люди ${d.by === "week" ? "по неделям" : "по дням"}">${lines.join("")}${bars}</svg>`;
 
@@ -472,7 +496,7 @@ const byTitle = (rows) => Object.fromEntries((rows || []).map((x) => [x.name, x]
 function barRow({ name, value, base, hint = "", note = "", c = null }) {
   const w = base ? Math.min(100, value / base * 100) : 0;
   return `<div class="brow">
-    <div class="brow-top"><span class="name">${esc(name)}</span><span class="num">${num(value)}${note ? `<small>${note}</small>` : ""}${badge(c)}</span></div>
+    <div class="brow-top"><span class="name">${esc(name)}</span><span class="num"><span data-num>${num(value)}</span>${note ? `<small>${note}</small>` : ""}${badge(c)}</span></div>
     <div class="track"><div class="fill" style="width:${w.toFixed(1)}%"></div></div>
     ${hint ? `<p class="hint">${esc(hint)}</p>` : ""}
   </div>`;
@@ -509,7 +533,7 @@ function recordsCard(d, users) {
     .map(([name, hint], i) => barRow({ name, value: p.buckets[i], base: Math.max(...p.buckets), hint, note: pct(p.buckets[i], p.count) })).join("")}</div>` : "";
   return `<section class="card"><div class="card-head"><div><h2>Рекорды и верность</h2>
     <p class="lead">Самые активные ученики и те, кто возвращается. Зачем: видно, есть ли у TanWin постоянные ученики.</p></div></div>
-    <div class="records">${items.map((x) => `<div class="record"><span class="mark" aria-hidden="true"></span><span class="value">${x.value}</span><span class="label">${esc(x.label)}</span><span class="what">${esc(x.what)}</span></div>`).join("")}</div>${dist}</section>`;
+    <div class="records">${items.map((x) => `<div class="record"><span class="mark" aria-hidden="true"></span><span class="value" data-num>${big(x.value)}</span><span class="label">${esc(x.label)}</span><span class="what">${esc(x.what)}</span></div>`).join("")}</div>${dist}</section>`;
 }
 
 function listCard(title, lead, res) {
@@ -589,6 +613,112 @@ function helpCard() {
   <div class="foot"><span>Счётчик ${COUNTER}</span>${installEvt ? `<button class="btn ghost" type="button" id="install">Поставить значок на устройство</button>` : ""}<button class="link-btn" type="button" id="logout">Отключить ключ на этом устройстве</button></div></section>`;
 }
 
+/* ---------- Движение, как на сайте C4 Street: вес, пружина, глубина ----------
+   Карточки вылетают, буквы падают, цифры отсчитываются, полосы растут. Всё это один раз при открытии
+   и при смене периода: тихое обновление данных показывает новые цифры сразу. */
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+if (!reduce) document.documentElement.classList.add("anim");
+let seen = new Set(), seenFor = ""; // карточки, которые уже появились на этом экране
+const io = new IntersectionObserver((entries) => entries.forEach((e) => {
+  if (!e.isIntersecting) return;
+  io.unobserve(e.target);
+  reveal(e.target, true);
+}), { rootMargin: "0px 0px -6% 0px", threshold: 0 });
+
+function reveal(el, play) {
+  el.classList.add("in");
+  seen.add(el.dataset.k);
+  if (play) el.querySelectorAll("[data-num]").forEach(countUp);
+}
+
+/* После каждой отрисовки: разбить заголовки на буквы, расставить очередь и показать карточки. */
+function motion(screen) {
+  if (screen !== seenFor) { seen = new Set(); seenFor = screen; }
+  io.disconnect();
+  app.querySelectorAll(".bars, .chips, .records").forEach((box) => [...box.children].forEach((x, i) => x.style.setProperty("--i", i)));
+  app.querySelectorAll(".card h2, .tag-word").forEach(splitLetters);
+  app.querySelectorAll(".card:not(.skeleton), .tag-word, .tape").forEach((el, i) => {
+    el.dataset.k = i;
+    if (reduce || seen.has(String(i))) reveal(el, false);
+    else io.observe(el);
+  });
+  tapeHalf = 0;
+}
+
+/* Каждая буква отдельно, слова не рвутся. Экранный диктор читает заголовок целиком. */
+function splitLetters(el) {
+  if (el.dataset.split) return;
+  el.dataset.split = "1";
+  el.classList.add("kin");
+  if (!el.hasAttribute("aria-hidden")) el.setAttribute("aria-label", el.textContent.replace(/\s+/g, " ").trim());
+  let i = 0;
+  const walk = (node) => [...node.childNodes].forEach((n) => {
+    if (n.nodeType === 1) { walk(n); return; }
+    if (n.nodeType !== 3) return;
+    const frag = document.createDocumentFragment();
+    n.textContent.split(/(\s+)/).forEach((part) => {
+      if (!part) return;
+      if (/^\s+$/.test(part)) { frag.append(" "); return; }
+      const w = document.createElement("span");
+      w.className = "w";
+      w.setAttribute("aria-hidden", "true");
+      for (const c of part) {
+        const s = document.createElement("span");
+        s.className = "ch";
+        s.style.setProperty("--i", i++);
+        s.textContent = c;
+        w.append(s);
+      }
+      frag.append(w);
+    });
+    n.replaceWith(frag);
+  });
+  walk(el);
+}
+
+/* Цифры отсчитываются от нуля. Меняются только числа, слова и проценты остаются на месте. */
+const NUM = /\d+(?:[  ]\d{3})*/g;
+function countUp(el) {
+  if (reduce) return;
+  const parts = [];
+  const tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  while (tw.nextNode()) if (/\d/.test(tw.currentNode.data)) parts.push([tw.currentNode, tw.currentNode.data]);
+  if (!parts.length) return;
+  const t0 = performance.now() + 200, D = 1100;
+  const step = (now) => {
+    const k = Math.min(Math.max((now - t0) / D, 0), 1), e = 1 - (1 - k) ** 4;
+    parts.forEach(([n, text]) => { n.data = text.replace(NUM, (m) => num(+m.replace(/\D/g, "") * e)); });
+    if (k < 1) requestAnimationFrame(step);
+  };
+  step(performance.now());
+  requestAnimationFrame(step);
+}
+
+/* Шапка с тенью при прокрутке, фон на разной глубине, лента ускоряется, когда листают. */
+const header = $("#top");
+const layers = [...document.querySelectorAll(".bg [data-speed]")].map((el) => [el, +el.dataset.speed]);
+let tapeX = 0, tapeHalf = 0, vel = 0, dir = -1, lastY = scrollY, prevT = performance.now();
+addEventListener("scroll", () => header.classList.toggle("scrolled", scrollY > 8), { passive: true });
+function tick(now) {
+  const dt = Math.min(now - prevT, 50); prevT = now;
+  const y = scrollY, dy = y - lastY; lastY = y;
+  if (dy) dir = dy > 0 ? -1 : 1;
+  vel += (Math.abs(dy) - vel) * .12;
+  layers.forEach(([el, s]) => { el.style.translate = `0 ${(-y * s).toFixed(1)}px`; });
+  const track = $("#tape");
+  if (track) {
+    if (!tapeHalf) tapeHalf = track.scrollWidth / 2;
+    tapeX += dir * (.05 + vel * .02) * dt;
+    if (tapeX <= -tapeHalf) tapeX += tapeHalf;
+    if (tapeX > 0) tapeX -= tapeHalf;
+    track.style.transform = `translateX(${tapeX.toFixed(1)}px)`;
+  }
+  requestAnimationFrame(tick);
+}
+if (!reduce) requestAnimationFrame(tick);
+document.fonts?.ready.then(() => { tapeHalf = 0; });
+requestAnimationFrame(() => { splitLetters($("#title")); requestAnimationFrame(() => $("#title").classList.add("in")); });
+
 /* ---------- Запуск ---------- */
 let busy = false;
 async function start() {
@@ -617,7 +747,7 @@ async function start() {
     }
   } catch (e) {
     if (e instanceof AuthError) { store.del(K_TOKEN); showConnect("Яндекс не принял ключ. Подключи Метрику заново."); return; }
-    if (!cached) app.innerHTML = `<section class="card"><p class="error">${esc(e.message)}</p></section>`;
+    if (!cached) { app.innerHTML = `<section class="card"><p class="error">${esc(e.message)}</p></section>`; motion("error"); }
     else $("#updated").textContent += ` · ${e.message}`;
   } finally {
     busy = false;
@@ -644,7 +774,7 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && store.get(K_TOKEN)) start(); });
 let resizeT;
-window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { try { const c = JSON.parse(store.get(K_CACHE) || "null"); if (c && $("#chart")) wireChart(c); } catch { /* нет данных */ } }, 150); });
+window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { tapeHalf = 0; try { const c = JSON.parse(store.get(K_CACHE) || "null"); if (c && $("#chart")) wireChart(c); } catch { /* нет данных */ } }, 150); });
 
 store.del("tws-cache2"); // память прошлой версии страницы
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
