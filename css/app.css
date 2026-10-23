@@ -85,12 +85,43 @@ h1, h2, h3, p { margin: 0; }
 .top.scrolled { background: rgba(12, 102, 240, .93); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 3px 0 var(--ink); }
 .brand { display: flex; gap: 12px; align-items: center; min-width: 0; }
 .brand img { width: 54px; height: 54px; flex: none; rotate: -5deg; } /* у значка свой контур и тень: icons/, рисует tools/znachok.py */
+.brand-text { min-width: 0; }
+.title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .brand h1 { font: 900 20px/1.1 var(--font-display); color: var(--white); text-shadow: 2px 2px 0 var(--ink); letter-spacing: -.01em; }
-.brand h1 .tag {
-  display: inline-block; margin-left: 2px; rotate: -5deg;
-  font: 400 1.3em/1 var(--font-graffiti); color: var(--yellow);
-  text-shadow: 2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 2px 0 var(--ink), 0 -2px 0 var(--ink), 4px 4px 0 var(--ink);
+
+/* Кнопка проекта: жёлтая наклейка, по нажатию открывается список счётчиков Метрики */
+.proj {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: 44px; padding: 0 8px 0 14px; cursor: pointer;
+  border: var(--line); border-radius: 999px; background: var(--yellow); color: var(--ink);
+  font: 800 16px/1.1 var(--font-display); box-shadow: 3px 3px 0 var(--ink); rotate: -3deg;
+  transition: transform .15s var(--out), box-shadow .15s var(--out);
 }
+.proj:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--ink); }
+.proj:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--ink); }
+.proj-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj svg { flex: none; transition: rotate .35s var(--spring); }
+.proj[aria-expanded="true"] svg { rotate: 180deg; }
+.proj-menu {
+  position: absolute; z-index: 30; left: max(16px, calc((100vw - 1280px) / 2));
+  width: min(360px, calc(100vw - 32px)); max-height: 70vh; overflow: auto;
+  display: grid; gap: 10px; padding: 14px;
+  background: var(--paper); color: var(--ink); border: var(--line); border-radius: var(--r-sm); box-shadow: var(--shadow);
+  animation: pop .35s var(--spring);
+}
+@keyframes pop { from { opacity: 0; transform: translateY(-8px) scale(.96); } }
+.pm-h { padding: 0 4px; color: var(--muted); font-size: 13px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.pm-list { display: grid; gap: 8px; }
+.pm-item {
+  display: grid; gap: 2px; min-height: 58px; padding: 10px 14px; cursor: pointer; text-align: left;
+  border: 2px solid var(--ink); border-radius: 14px; background: var(--white); box-shadow: 2px 2px 0 var(--ink);
+  transition: transform .15s var(--out), box-shadow .15s var(--out);
+}
+.pm-item:active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--ink); }
+.pm-item b { font: 800 16px/1.2 var(--font-display); overflow-wrap: anywhere; }
+.pm-item small { color: var(--ink-2); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.pm-item[aria-selected="true"] { background: var(--yellow); }
+.pm-item[aria-selected="true"] b::after { content: " ✓"; }
+.pm-note { padding: 0 4px; color: var(--ink-2); font-size: 13px; font-weight: 600; }
 .updated { color: rgba(255, 255, 255, .86); font-size: 13px; font-weight: 600; min-height: 1.2em; margin-top: 3px; }
 .top-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
@@ -220,11 +251,12 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px 16px 72px; display: grid
 
 /* График по дням */
 .chart { position: relative; width: 100%; }
-.chart svg { display: block; width: 100%; height: 250px; overflow: visible; }
+.chart svg { display: block; width: 100%; overflow: visible; } /* высоту ставит js/app.js: 250 у графика по дням, 220 у дней недели и часов */
 .chart .gridline { stroke: rgba(11, 13, 23, .16); stroke-width: 1; stroke-dasharray: 4 6; }
 .chart .axis { fill: var(--ink-2); font: 700 12px var(--font-body); font-variant-numeric: tabular-nums; }
-.chart .bar { fill: var(--blue); stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; transform-box: fill-box; transform-origin: 50% 100%; transition: fill .2s; }
+.chart .bar { fill: var(--blue); stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; transform-box: fill-box; transform-origin: 50% 100%; transition: fill .2s; pointer-events: none; } /* нажатие ловит прозрачная зона столбика (.hit) */
 .chart .bar.part { fill: var(--sky); }
+.chart .bar.best { fill: var(--yellow); }
 .chart .hit { fill: transparent; cursor: pointer; }
 .chart .hit:hover + .bar, .chart .bar.on { fill: var(--pink); }
 .chart .ghost-o { stroke: var(--ink); stroke-width: 7; stroke-linecap: round; pointer-events: none; }
@@ -234,6 +266,16 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px 16px 72px; display: grid
 .lg { display: inline-flex; align-items: center; gap: 8px; }
 .lg-bar { width: 16px; height: 16px; border-radius: 4px; background: var(--blue); border: 2px solid var(--ink); }
 .lg-bar.part { background: var(--sky); }
+.lg-bar.best { background: var(--yellow); }
+/* Итог карточки одной строкой: самый сильный день, самый частый час */
+.sum { margin: -6px 0 14px; font-weight: 700; }
+.sum b { padding: 1px 7px; border-radius: 8px; background: var(--yellow); -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+/* Части дня под графиком часов */
+.dayparts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
+.dp { display: grid; gap: 2px; padding: 8px 12px; border: 2px solid var(--ink); border-radius: 12px; background: var(--white); box-shadow: 2px 2px 0 var(--ink); }
+.dp span { color: var(--ink-2); font-size: 13px; font-weight: 700; }
+.dp b { font: 900 20px/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
+.dp.top { background: var(--yellow); }
 .lg-ghost { width: 22px; height: 7px; border-radius: 4px; background: var(--yellow); border: 2px solid var(--ink); }
 .toggle-table {
   margin-top: 14px; min-height: 48px; padding: 0 18px; cursor: pointer;
@@ -395,6 +437,9 @@ details.help ul b { color: var(--ink); }
   .verdict .sign { width: 54px; height: 54px; font-size: 24px; }
   .verdict h2 { font-size: 21px; }
   .brand h1 { font-size: 18px; }
+  .title-row { column-gap: 8px; }
+  .proj { padding: 0 6px 0 12px; font-size: 14px; }
+  .dayparts { grid-template-columns: repeat(2, 1fr); }
   .top-actions { width: 100%; flex-wrap: nowrap; gap: 10px; }
   .periods { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
   .periods button { padding: 0 4px; font-size: 13px; white-space: normal; }

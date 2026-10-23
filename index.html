@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <title>Статистика TanWin</title>
-  <meta name="description" content="Понятная статистика приложения TanWin из Яндекс.Метрики.">
+  <title>Статистика проектов</title>
+  <meta name="description" content="Понятная статистика проектов из Яндекс.Метрики.">
   <meta name="theme-color" content="#0c66f0">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
@@ -26,11 +26,18 @@
   <header class="top" id="top">
     <div class="brand">
       <img src="icons/icon-192.png" alt="" width="54" height="54">
-      <div>
-        <h1 class="kin" id="title">Статистика <span class="tag">TanWin</span></h1>
+      <div class="brand-text">
+        <div class="title-row">
+          <h1 class="kin" id="title">Статистика</h1>
+          <button class="proj" id="proj" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="projMenu" hidden>
+            <span class="proj-name" id="projName">TanWin</span>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
         <p class="updated" id="updated"></p>
       </div>
     </div>
+    <div class="proj-menu" id="projMenu" hidden></div>
     <div class="top-actions" id="topActions" hidden>
       <div class="periods" role="tablist" aria-label="Период" id="periods"></div>
       <button class="icon-btn" id="refresh" type="button" aria-label="Обновить">
