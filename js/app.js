@@ -858,7 +858,7 @@ function funnelCard(d, users) {
   if (!d.cat) return catWait(d, "Путь покупателя");
   const g = goalUsers(d), zak = g.zakaz, vyb = g.vybor_cveta, prev = prevTotals(d);
   const rows = [
-    barRow({ name: "Зашли в каталог", value: users, base: users, note: "100%", c: prev && change(users, prev[0]), hint: "Все люди за период." }),
+    barRow({ name: "Зашли в каталог", value: users, base: users, note: users ? "100%" : "", c: prev && change(users, prev[0]), hint: "Все люди за период." }),
     barRow({ name: "Открыли страницу модели", value: d.cat.pageUsers, base: users, note: pct(d.cat.pageUsers, users), hint: "Страница одной модели: все версии, цвета и цены. Сюда приходят и прямо из поиска Яндекса и Google." }),
     barRow({ name: "Выбрали цвет или версию", value: vyb?.users || 0, base: users, note: pct(vyb?.users || 0, users), c: vyb && change(vyb.users, vyb.prev), hint: "Нажали кружок цвета на карточке в каталоге." }),
     barRow({ name: "Нажали «Заказать»", value: zak?.users || 0, base: users, note: pct(zak?.users || 0, users), c: zak && change(zak.users, zak.prev), hint: "Открыли WhatsApp с готовым сообщением о товаре. Само сообщение человек отправляет сам." }),
