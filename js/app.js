@@ -3,6 +3,7 @@
 "use strict";
 
 const TANWIN = 113307386; // счётчик TanWin: у него свои карточки (путь ученика, разделы, «Ещё»)
+const KATALOG = 113761734; // счётчик каталога техники: свои карточки (путь покупателя, модели, цвета, поиск)
 const CLIENT_ID = "3657b17d5af3451b88e8e4331486f614"; // приложение «Статистика TanWin» на oauth.yandex.ru, Яндекс возвращает ключ на адрес сайта
 const AUTH_URL = `https://oauth.yandex.ru/authorize?response_type=token&client_id=${CLIENT_ID}`;
 const API = "https://api-metrika.yandex.net";
@@ -120,6 +121,7 @@ function screenName(t) {
   return m ? `Тренировка «${PRACTICE[m[1]] || m[1]}»` : t;
 }
 const isTW = (d) => d.counter?.id === TANWIN;
+const isKT = (d) => d.counter?.id === KATALOG;
 
 /* ---------- API Метрики ---------- */
 class AuthError extends Error {}
@@ -190,7 +192,7 @@ const FROM_MORE = "ym:pv:referer=@'#/more'"; // экраны TanWin, на кот
 
 async function load(period, c) {
   TZ = c.tz || TZ;
-  const created = c.created, ids = c.id, tw = ids === TANWIN;
+  const created = c.created, ids = c.id, tw = ids === TANWIN, kt = ids === KATALOG;
   const r = range(period, created);
   if (created && r.prev1 && r.prev1 < created) { delete r.prev1; delete r.prev2; delete r.cut; }
   const goalsRes = await api(`/management/v1/counter/${ids}/goals`).catch(() => ({ goals: [] }));
@@ -226,6 +228,10 @@ async function load(period, c) {
     screensPrev: tw && old ? stat({ ...SCREENS, ...cutPv() }) : null,
     more: tw ? stat({ ...SCREENS, ...cur, filters: FROM_MORE }) : null,
     morePrev: tw && old ? stat({ ...SCREENS, ...cutPv(FROM_MORE) }) : null,
+    /* Каталог: параметры визитов (выбор цвета, заказ, поиск, раздел) и страницы моделей. Их пишет сам сайт каталога. */
+    catParams: kt ? stat({ ...CAT_PARAMS, ...cur }) : null,
+    catModels: kt ? stat({ dimensions: "ym:pv:title", metrics: "ym:pv:pageviews,ym:pv:users", filters: CAT_MODEL, sort: "-ym:pv:pageviews", limit: 300, ...cur }) : null,
+    catModelUsers: kt ? stat({ metrics: "ym:pv:users", filters: CAT_MODEL, ...cur }) : null,
     /* Каждый человек (браузер) отдельно: заходы и время. Отсюда рекорды и «сколько раз заходили». */
     people: stat({ dimensions: "ym:s:clientID", metrics: "ym:s:visits,ym:s:sumVisitDuration", sort: "-ym:s:visits", limit: 10000, ...cur }),
   };
@@ -248,7 +254,39 @@ async function load(period, c) {
     out[k] = a;
   }
   if (out.people) { out.peopleSum = summarizePeople(out.people.data || []); delete out.people; }
+  if (out.catParams || out.catModels) {
+    out.cat = summarizeCatalog(out.catParams, out.catModels, out.catModelUsers);
+    delete out.catParams; delete out.catModels; delete out.catModelUsers;
+  }
   return out;
+}
+
+/* Каталог техники. Параметры визитов пишет сайт каталога (index.html и страницы моделей):
+   «Выбор цвета» и «Заказ в WhatsApp»: модель с памятью -> версия (цвет, страна, SIM); «Открыли модель»: модель -> память;
+   «Поиск в каталоге» и «Раздел каталога»: одно значение. Число: заходы, в которых это было. */
+const CAT_PARAMS = { dimensions: "ym:s:paramsLevel1,ym:s:paramsLevel2,ym:s:paramsLevel3", metrics: "ym:s:visits,ym:s:users", sort: "-ym:s:visits", limit: 2000 };
+const CAT_MODEL = "ym:pv:URLPath=@'/model/'"; // страницы моделей: адрес вида /katalog-tehniki/model/iphone-17-pro/
+const CAT_GROUPS = { "Выбор цвета": "choose", "Заказ в WhatsApp": "order", "Открыли модель": "opened", "Поиск в каталоге": "search", "Раздел каталога": "section" };
+/* Название страницы модели: «Купить iPhone 17 Pro в Грозном: цена от …». Цена меняется, модель нет. */
+const modelOfTitle = (t) => (String(t || "").match(/^Купить\s+(.+?)\s+в\s+Грозном/) || [])[1] || cleanTitle(t);
+/* «iPhone 17 Pro Max, 2 ТБ» -> «iPhone 17 Pro Max»; «Серебристый, Япония, eSIM» -> «Серебристый». */
+const firstPart = (s) => String(s || "").split(", ")[0];
+function summarizeCatalog(params, models, modelUsers) {
+  const cat = { choose: [], order: [], opened: [], search: [], section: [], models: [], pageUsers: totals(modelUsers)[0] || 0 };
+  for (const r of params?.data || []) {
+    const [g, a, b] = r.dimensions.map((x) => x?.name ?? null);
+    const k = CAT_GROUPS[g];
+    if (k && a) cat[k].push({ a, b, visits: r.metrics[0], users: r.metrics[1] });
+  }
+  const m = {};
+  for (const r of models?.data || []) {
+    const name = modelOfTitle(r.dimensions[0].name);
+    if (!name) continue;
+    m[name] = m[name] || { name, pv: 0, users: 0 };
+    m[name].pv += r.metrics[0]; m[name].users += r.metrics[1];
+  }
+  cat.models = Object.values(m);
+  return cat;
 }
 
 /* Сводка по людям: рекорды и сколько раз заходили. Номера браузеров не сохраняются. */
@@ -456,6 +494,11 @@ function render(d) {
     html.push(tag("Разделы"), cols(sectionsCard(d, users), moreCard(d)));
     html.push(tag("Что делают"), cols(screensCard(d), otherGoalsCard(d, users)));
   } else {
+    if (isKT(d)) {
+      html.push(tag("Покупатели"), cols(funnelCard(d, users), modelsCard(d)));
+      html.push(tag("Цвета"), cols(colorsCard(d), versionsCard(d)));
+      html.push(tag("Поиск"), cols(searchCard(d), catSectionsCard(d)));
+    }
     html.push(tag("Люди"), cols(recordsCard(d, users), otherGoalsCard(d, users)));
     html.push(tag("Что смотрят"), screensCard(d));
   }
@@ -800,6 +843,94 @@ function otherGoalsCard(d, users) {
     <div class="bars">${rows.map(([k, x]) => barRow({ name: GOALS[k]?.name || x.name, value: x.users, base: max, hint: GOALS[k]?.hint, note: pct(x.users, users), c: change(x.users, x.prev, GOALS[k]?.bad) })).join("")}</div></section>`;
 }
 
+/* ---------- Каталог техники ---------- */
+const catWait = (d, title) => errCard(title, d.errors.catParams || d.errors.catModels || "Данные каталога ещё загружаются.");
+const emptyCard = (title, lead) => `<section class="card"><h2>${esc(title)}</h2><p class="lead">${lead}</p></section>`;
+/* Сумма заходов по ключу. */
+function sumBy(rows, key) {
+  const m = {};
+  for (const r of rows) { const k = key(r); if (k) m[k] = (m[k] || 0) + r.visits; }
+  return m;
+}
+
+/* Путь покупателя: зашли в каталог, открыли страницу модели, выбрали цвет, нажали «Заказать». */
+function funnelCard(d, users) {
+  if (!d.cat) return catWait(d, "Путь покупателя");
+  const g = goalUsers(d), zak = g.zakaz, vyb = g.vybor_cveta, prev = prevTotals(d);
+  const rows = [
+    barRow({ name: "Зашли в каталог", value: users, base: users, note: "100%", c: prev && change(users, prev[0]), hint: "Все люди за период." }),
+    barRow({ name: "Открыли страницу модели", value: d.cat.pageUsers, base: users, note: pct(d.cat.pageUsers, users), hint: "Страница одной модели: все версии, цвета и цены. Сюда приходят и прямо из поиска Яндекса и Google." }),
+    barRow({ name: "Выбрали цвет или версию", value: vyb?.users || 0, base: users, note: pct(vyb?.users || 0, users), c: vyb && change(vyb.users, vyb.prev), hint: "Нажали кружок цвета на карточке в каталоге." }),
+    barRow({ name: "Нажали «Заказать»", value: zak?.users || 0, base: users, note: pct(zak?.users || 0, users), c: zak && change(zak.users, zak.prev), hint: "Открыли WhatsApp с готовым сообщением о товаре. Само сообщение человек отправляет сам." }),
+  ];
+  return `<section class="card"><div class="card-head"><div><h2>Путь покупателя</h2>
+    <p class="lead">Сколько людей дошли до каждого шага. Процент от всех, кто открыл каталог. Зачем: видно, на каком шаге люди уходят.</p></div></div>
+    <div class="bars">${rows.join("")}</div></section>`;
+}
+
+/* Популярные модели: страница модели и выбор цвета в каталоге. Рядом сколько раз нажали «Заказать». */
+function modelsCard(d) {
+  const title = "Популярные модели";
+  if (!d.cat) return catWait(d, title);
+  const views = Object.fromEntries(d.cat.models.map((x) => [x.name, x.pv]));
+  const chose = sumBy(d.cat.choose, (r) => firstPart(r.a)), ordered = sumBy(d.cat.order, (r) => firstPart(r.a));
+  const rows = [...new Set([...Object.keys(views), ...Object.keys(chose), ...Object.keys(ordered)])]
+    .map((name) => ({ name, look: (views[name] || 0) + (chose[name] || 0), pv: views[name] || 0, ch: chose[name] || 0, ord: ordered[name] || 0 }))
+    .sort((a, b) => b.look - a.look || b.ord - a.ord).slice(0, 8);
+  if (!rows.length) return emptyCard(title, "За этот период модели ещё не смотрели. Карточка заполнится, когда люди начнут открывать каталог.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Сколько раз модель смотрели: открыли её страницу или выбирали цвет на карточке в каталоге. Справа: сколько раз нажали «Заказать». Зачем: видно, какие модели держать в наличии и рекламировать.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: x.name, value: x.look, base: rows[0].look, note: `заказов ${num(x.ord)}`, hint: `Страница модели: ${num(x.pv)}, выбор цвета в каталоге: ${num(x.ch)}.` })).join("")}</div></section>`;
+}
+
+/* Цвета: какой цвет выбирают и заказывают, по всем моделям вместе. */
+function colorsCard(d) {
+  const title = "Какие цвета выбирают";
+  if (!d.cat) return catWait(d, title);
+  const chose = sumBy(d.cat.choose, (r) => firstPart(r.b)), ordered = sumBy(d.cat.order, (r) => firstPart(r.b));
+  const rows = [...new Set([...Object.keys(chose), ...Object.keys(ordered)])]
+    .map((name) => ({ name, all: (chose[name] || 0) + (ordered[name] || 0), ord: ordered[name] || 0 }))
+    .sort((a, b) => b.all - a.all).slice(0, 8);
+  if (!rows.length) return emptyCard(title, "За этот период цвет ещё никто не выбирал.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Сколько раз выбрали цвет или ремешок на карточке и заказали его, все модели вместе. Справа: из них заказов. Зачем: видно, какие цвета брать у поставщика.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: x.name, value: x.all, base: rows[0].all, note: `заказов ${num(x.ord)}` })).join("")}</div></section>`;
+}
+
+/* Что заказывают: модель, память и версия целиком. Пока заказов нет: что выбирают. */
+function versionsCard(d) {
+  if (!d.cat) return catWait(d, "Что заказывают");
+  const ord = d.cat.order.length > 0, src = ord ? d.cat.order : d.cat.choose;
+  const title = ord ? "Что заказывают" : "Что выбирают";
+  const rows = [...src].sort((a, b) => b.visits - a.visits).slice(0, 8);
+  if (!rows.length) return emptyCard("Что заказывают", "За этот период «Заказать» ещё никто не нажимал.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">${ord ? "Сколько раз нажали «Заказать» у этой модели, памяти и версии." : "Заказов пока нет. Здесь версии, которые чаще всего выбирали на карточке."} Версия: цвет, страна, SIM. Зачем: видно точный товар, который нужен людям.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: `${x.a} · ${x.b || "без версии"}`, value: x.visits, base: rows[0].visits, note: people(x.users) })).join("")}</div></section>`;
+}
+
+/* Что пишут в поиске каталога. */
+function searchCard(d) {
+  const title = "Что ищут в каталоге";
+  if (!d.cat) return catWait(d, title);
+  const rows = [...d.cat.search].sort((a, b) => b.visits - a.visits).slice(0, 10);
+  if (!rows.length) return emptyCard(title, "За этот период поиском в каталоге не пользовались.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Слова, которые люди писали в поле поиска на сайте. Число: в скольких заходах. Зачем: видно, какой товар ищут, даже если его нет в наличии.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: `«${x.a}»`, value: x.visits, base: rows[0].visits, note: people(x.users) })).join("")}</div></section>`;
+}
+
+/* Разделы каталога, которые нажимают: iPhone, MacBook и другие. */
+function catSectionsCard(d) {
+  const title = "Какие разделы нажимают";
+  if (!d.cat) return catWait(d, title);
+  const rows = [...d.cat.section].sort((a, b) => b.visits - a.visits);
+  if (!rows.length) return emptyCard(title, "За этот период разделы каталога не нажимали. Все товары видны и без раздела.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Кнопки над карточками: iPhone, MacBook, iPad и другие. Число: в скольких заходах нажали. Зачем: видно, какой вид техники ищут.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: x.a, value: x.visits, base: rows[0].visits, note: people(x.users) })).join("")}</div></section>`;
+}
+
 function errCard(title, msg) {
   return `<section class="card"><h2>${esc(title)}</h2><p class="lead">${esc(msg || "Метрика не отдала эти данные.")}</p></section>`;
 }
@@ -818,6 +949,7 @@ function helpCard(d) {
     <li><b>По часам:</b> сколько заходов началось в каждый час, по часам счётчика${TZ === "Europe/Moscow" ? " (Москва)" : ""}.</li>
     ${tw ? `<li><b>«Ещё»</b>: считаются только переходы прямо из «Ещё». Тот же экран, открытый с «Пути» или из уведомления, сюда не попадает.</li>
     <li>Ученики, которые выключили «Анонимную статистику» в TanWin, в цифры не попадают.</li>` : ""}
+    ${isKT(d) ? `<li><b>Модели, цвета и поиск</b> считаются по заходам: если человек два раза выбрал один цвет за один заход, это один раз. Эти данные присылает сам сайт каталога.</li>` : ""}
     <li>Данные приходят из Яндекс.Метрики с опозданием в несколько минут.</li>
   </ul></details>
   <div class="foot"><span>Счётчик ${d.counter.id}</span>${installEvt ? `<button class="btn ghost" type="button" id="install">Поставить значок на устройство</button>` : ""}<button class="link-btn" type="button" id="logout">Отключить ключ на этом устройстве</button></div></section>`;
