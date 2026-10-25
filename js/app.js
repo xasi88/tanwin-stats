@@ -32,6 +32,8 @@ const GOALS = {
   feedback: { name: "Написали автору", hint: "Нажали «Отправить» в окне «Написать автору» (WhatsApp)." },
   tour_done: { name: "Досмотрели подсказку новичку", hint: "Прошли подсказку на «Пути» до конца." },
   tour_skipped: { name: "Закрыли подсказку новичку", hint: "Закрыли подсказку на «Пути» раньше конца.", bad: true },
+  news_vote: { name: "Оценили новый вид", hint: "Ответили на вопрос «Как вам новый вид?» в письме о TanWin 3.0 на «Пути». Сами ответы: в разделе «Отзывы»." },
+  first_choice: { name: "Выбрали, с чего начать", hint: "Новичок нажал один из вариантов на карточке «С чего начнём?» на «Пути». Что выбирают: в разделе «Отзывы»." },
   all_messengers: { name: "Перешли в мессенджер", hint: "Нажали любую ссылку на WhatsApp или Telegram. Эту цель Метрика ведёт сама." },
 };
 /* Путь ученика: от первого входа до установки. */
@@ -189,6 +191,10 @@ const MAIN = "ym:s:users,ym:s:visits,ym:s:newUsers,ym:s:avgVisitDurationSeconds,
 const SCREENS = { dimensions: "ym:pv:title", metrics: "ym:pv:pageviews,ym:pv:users", sort: "-ym:pv:pageviews", limit: 300 };
 const HOURS = { dimensions: "ym:s:hour", metrics: "ym:s:visits,ym:s:users", sort: "ym:s:hour", limit: 24 };
 const FROM_MORE = "ym:pv:referer=@'#/more'"; // экраны TanWin, на которые перешли из «Ещё»
+/* Отзывы TanWin 3.0. Ответ приходит параметром цели, Метрика хранит его как параметр визита:
+   news_vote шлёт «Письмо» (номер письма) и «Оценка», first_choice шлёт «Выбор». Другие цели TanWin этих слов не шлют. */
+const ANSWERS_F = "ym:s:paramsLevel1=.('Оценка','Выбор','Письмо')";
+const ANSWERS = { dimensions: "ym:s:paramsLevel1,ym:s:paramsLevel2", metrics: "ym:s:users", sort: "-ym:s:users", limit: 100 };
 
 async function load(period, c) {
   TZ = c.tz || TZ;
@@ -228,6 +234,8 @@ async function load(period, c) {
     screensPrev: tw && old ? stat({ ...SCREENS, ...cutPv() }) : null,
     more: tw ? stat({ ...SCREENS, ...cur, filters: FROM_MORE }) : null,
     morePrev: tw && old ? stat({ ...SCREENS, ...cutPv(FROM_MORE) }) : null,
+    answers: tw ? stat({ ...ANSWERS, ...cur, filters: ANSWERS_F }) : null,
+    answersPrev: tw && old ? stat({ ...ANSWERS, ...old, filters: `ym:s:dateTime<'${r.cut}' AND ${ANSWERS_F}` }) : null,
     /* Каталог: параметры визитов (выбор цвета, заказ, поиск, раздел) и страницы моделей. Их пишет сам сайт каталога. */
     catParams: kt ? stat({ ...CAT_PARAMS, ...cur }) : null,
     catModels: kt ? stat({ dimensions: "ym:pv:title", metrics: "ym:pv:pageviews,ym:pv:users", filters: CAT_MODEL, sort: "-ym:pv:pageviews", limit: 300, ...cur }) : null,
@@ -253,6 +261,16 @@ async function load(period, c) {
     for (const x of out[k].data || []) { const h = +x.dimensions[0].id; if (a[h]) a[h] = x.metrics; }
     out[k] = a;
   }
+  /* Ответы храним деревом: { Оценка: { Нравится: люди }, Выбор: {…}, Письмо: {…} }. */
+  for (const k of ["answers", "answersPrev"]) {
+    if (!out[k]) continue;
+    const t = {};
+    for (const x of out[k].data || []) {
+      const [a, b] = x.dimensions.map((y) => y?.name);
+      if (a && b) (t[a] ||= {})[b] = x.metrics[0];
+    }
+    out[k] = t;
+  }
   if (out.people) { out.peopleSum = summarizePeople(out.people.data || []); delete out.people; }
   if (out.catParams || out.catModels) {
     out.cat = summarizeCatalog(out.catParams, out.catModels, out.catModelUsers);
@@ -265,7 +283,7 @@ async function load(period, c) {
    «Выбор цвета» и «Заказ в WhatsApp»: модель с памятью -> версия (цвет, страна, SIM); «Открыли модель»: модель -> память;
    «Поиск в каталоге» и «Раздел каталога»: одно значение. Число: заходы, в которых это было. */
 const CAT_PARAMS = { dimensions: "ym:s:paramsLevel1,ym:s:paramsLevel2,ym:s:paramsLevel3", metrics: "ym:s:visits,ym:s:users", sort: "-ym:s:visits", limit: 2000 };
-const CAT_MODEL = "ym:pv:URLPath=@'/model/'"; // страницы моделей: адрес вида /katalog-tehniki/model/iphone-17-pro/
+const CAT_MODEL = "ym:pv:URLPath=@'/model/'"; // страницы моделей: katalog.xasi88.ru/model/iphone-17-pro/ (до 2026-10-24 /katalog-tehniki/model/…, фильтр ловит оба)
 const CAT_GROUPS = { "Выбор цвета": "choose", "Заказ в WhatsApp": "order", "Открыли модель": "opened", "Поиск в каталоге": "search", "Раздел каталога": "section" };
 /* Название страницы модели: «Купить iPhone 17 Pro в Грозном: цена от …». Цена меняется, модель нет. */
 const modelOfTitle = (t) => (String(t || "").match(/^Купить\s+(.+?)\s+в\s+Грозном/) || [])[1] || cleanTitle(t);
@@ -491,6 +509,7 @@ function render(d) {
   html.push(tag("Когда заходят"), cols(weekdayCard(d), hoursCard(d)));
   if (tw) {
     html.push(tag("Ученики"), cols(pathCard(d, users, newUsers), recordsCard(d, users)));
+    html.push(tag("Отзывы"), cols(voteCard(d), choiceCard(d)));
     html.push(tag("Разделы"), cols(sectionsCard(d, users), moreCard(d)));
     html.push(tag("Что делают"), cols(screensCard(d), otherGoalsCard(d, users)));
   } else {
@@ -735,9 +754,9 @@ function goalUsers(d) {
 }
 const byTitle = (rows) => Object.fromEntries((rows || []).map((x) => [x.name, x]));
 
-function barRow({ name, value, base, hint = "", note = "", c = null }) {
+function barRow({ name, value, base, hint = "", note = "", c = null, cls = "" }) {
   const w = base ? Math.min(100, value / base * 100) : 0;
-  return `<div class="brow">
+  return `<div class="brow${cls ? ` ${cls}` : ""}">
     <div class="brow-top"><span class="name">${esc(name)}</span><span class="num"><span data-num>${num(value)}</span>${note ? `<small>${note}</small>` : ""}${badge(c)}</span></div>
     <div class="track"><div class="fill" style="width:${w.toFixed(1)}%"></div></div>
     ${hint ? `<p class="hint">${esc(hint)}</p>` : ""}
@@ -833,7 +852,7 @@ function screensCard(d) {
 function otherGoalsCard(d, users) {
   if (!d.goals?.length || !d.goalStats) return "";
   const tw = isTW(d), g = goalUsers(d);
-  const rows = Object.entries(g).filter(([k, x]) => tw ? !PATH.includes(k) && (GOALS[k] || x.users > 0) : x.users > 0 || x.prev > 0).sort((a, b) => b[1].users - a[1].users);
+  const rows = Object.entries(g).filter(([k, x]) => tw ? !PATH.includes(k) && !FEEDBACK.includes(k) && (GOALS[k] || x.users > 0) : x.users > 0 || x.prev > 0).sort((a, b) => b[1].users - a[1].users);
   if (!rows.length) return tw ? "" : `<section class="card"><h2>Цели</h2><p class="lead">За этот период цели никто не выполнил. Цели настраиваются в Метрике.</p></section>`;
   const max = Math.max(1, ...rows.map(([, x]) => x.users));
   const lead = tw ? "Сколько людей хотя бы раз сделали это за период. Процент от всех, кто открыл TanWin."
@@ -841,6 +860,54 @@ function otherGoalsCard(d, users) {
   return `<section class="card"><div class="card-head"><div><h2>${tw ? "Что ещё делают" : "Цели"}</h2>
     <p class="lead">${lead}</p></div></div>
     <div class="bars">${rows.map(([k, x]) => barRow({ name: GOALS[k]?.name || x.name, value: x.users, base: max, hint: GOALS[k]?.hint, note: pct(x.users, users), c: change(x.users, x.prev, GOALS[k]?.bad) })).join("")}</div></section>`;
+}
+
+/* ---------- Отзывы TanWin 3.0 ---------- */
+/* Цели с ответами: у них своя карточка, в «Что ещё делают» их нет. */
+const FEEDBACK = ["news_vote", "first_choice"];
+/* Ответ в Метрике, как его видит человек, и пояснение. bad: рост здесь плохой знак. */
+const VOTES = [
+  ["Нравится", "Нравится", "Нажали «Нравится» в письме.", "like"],
+  ["Не нравится", "Не нравится", "Нажали «Не нравится». После этого TanWin сам открывает окно «Написать автору».", "dislike", true],
+];
+const CHOICES = [
+  ["знакомство", "Начать со знакомства", "Короткий фильм: как устроено письмо и весь путь."],
+  ["первый урок", "Сразу первый урок", "Пропустили знакомство и открыли урок 1.1."],
+  ["проверка", "Я уже учился", "Проверка уровня: продолжить с нужного этапа."],
+];
+/* Строки ответов. Процент от тех, кто выполнил цель (если Метрика её не отдала, от суммы ответов). */
+function answerRows(d, goal, param, list) {
+  const now = d.answers?.[param] || {}, old = d.answersPrev ? d.answersPrev[param] || {} : null;
+  const sum = list.reduce((a, [key]) => a + (now[key] || 0), 0);
+  const base = goalUsers(d)[goal]?.users || sum;
+  return { sum, base, rows: list.map(([key, name, hint, cls, bad]) => barRow({ name, value: now[key] || 0, base, note: pct(now[key] || 0, base), c: old && change(now[key] || 0, old[key] || 0, bad), hint, cls })) };
+}
+const answersWait = (d, title) => errCard(title, d.errors.answers || "Данные ещё загружаются.");
+
+/* «Как вам новый вид?»: вопрос в письме о TanWin 3.0 на «Пути». */
+function voteCard(d) {
+  const title = "Как вам новый вид?";
+  if (!d.answers) return answersWait(d, title);
+  const { sum, base, rows } = answerRows(d, "news_vote", "Оценка", VOTES);
+  if (!sum) return emptyCard(title, "За этот период ответов нет. Вопрос стоит в письме о TanWin 3.0 на «Пути». Письмо видят ученики, которые занимались до обновления.");
+  const like = d.answers["Оценка"]?.["Нравится"] || 0;
+  const letters = Object.keys(d.answers["Письмо"] || {});
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Ответили ${people(base)}, нравится ${pct(like, base)}. Вопрос стоит в письме о новом виде на «Пути». Зачем: видно, принимают ли ученики новый вид.</p></div></div>
+    <div class="bars">${rows.join("")}</div>
+    ${letters.length ? `<p class="note card-foot">${letters.length > 1 ? `Ответы на письма ${letters.map(esc).join(", ")} вместе.` : `Письмо ${esc(letters[0])}.`}</p>` : ""}</section>`;
+}
+
+/* «С чего начнём?»: выбор новичка на карточке «Пути». */
+function choiceCard(d) {
+  const title = "С чего начинают новички";
+  if (!d.answers) return answersWait(d, title);
+  const { sum, rows } = answerRows(d, "first_choice", "Выбор", CHOICES);
+  if (!sum) return emptyCard(title, "За этот период выбора не было. Карточку «С чего начнём?» на «Пути» видят новички TanWin 3.0, пока не выбрали, с чего начать.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Что выбрали на карточке «С чего начнём?» на «Пути». Процент от тех, кто выбрал. Зачем: видно, хотят ли новички знакомство или сразу урок.</p></div></div>
+    <div class="bars">${rows.join("")}</div>
+    <p class="note card-foot">Кто бросил знакомство или проверку, видит карточку снова и может выбрать ещё раз. Поэтому проценты вместе бывают больше 100%.</p></section>`;
 }
 
 /* ---------- Каталог техники ---------- */
@@ -948,6 +1015,7 @@ function helpCard(d) {
     <li><b>По дням недели:</b> за 7 дней видно каждый день. За «Сегодня» (4 недели до сегодня), 30 дней и всё время: сколько людей в среднем за один такой день. Сегодня в среднее не идёт: день ещё не кончился.</li>
     <li><b>По часам:</b> сколько заходов началось в каждый час, по часам счётчика${TZ === "Europe/Moscow" ? " (Москва)" : ""}.</li>
     ${tw ? `<li><b>«Ещё»</b>: считаются только переходы прямо из «Ещё». Тот же экран, открытый с «Пути» или из уведомления, сюда не попадает.</li>
+    <li><b>Отзывы</b>: ответ приходит вместе с целью. Число: сколько людей так ответили за период.</li>
     <li>Ученики, которые выключили «Анонимную статистику» в TanWin, в цифры не попадают.</li>` : ""}
     ${isKT(d) ? `<li><b>Модели, цвета и поиск</b> считаются по заходам: если человек два раза выбрал один цвет за один заход, это один раз. Эти данные присылает сам сайт каталога.</li>` : ""}
     <li>Данные приходят из Яндекс.Метрики с опозданием в несколько минут.</li>
