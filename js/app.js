@@ -4,6 +4,7 @@
 
 const TANWIN = 113307386; // счётчик TanWin: у него свои карточки (путь ученика, разделы, «Ещё»)
 const KATALOG = 113761734; // счётчик каталога техники: свои карточки (путь покупателя, модели, цвета, поиск)
+const RAMBURGER = 113827061; // счётчик меню кафе «Рамбургер»: свои карточки (заказы, блюда, путь гостя, поиск)
 const CLIENT_ID = "3657b17d5af3451b88e8e4331486f614"; // приложение «Статистика TanWin» на oauth.yandex.ru, Яндекс возвращает ключ на адрес сайта
 const AUTH_URL = `https://oauth.yandex.ru/authorize?response_type=token&client_id=${CLIENT_ID}`;
 const API = "https://api-metrika.yandex.net";
@@ -124,6 +125,7 @@ function screenName(t) {
 }
 const isTW = (d) => d.counter?.id === TANWIN;
 const isKT = (d) => d.counter?.id === KATALOG;
+const isRB = (d) => d.counter?.id === RAMBURGER;
 
 /* ---------- API Метрики ---------- */
 class AuthError extends Error {}
@@ -198,7 +200,7 @@ const ANSWERS = { dimensions: "ym:s:paramsLevel1,ym:s:paramsLevel2", metrics: "y
 
 async function load(period, c) {
   TZ = c.tz || TZ;
-  const created = c.created, ids = c.id, tw = ids === TANWIN, kt = ids === KATALOG;
+  const created = c.created, ids = c.id, tw = ids === TANWIN, kt = ids === KATALOG, rb = ids === RAMBURGER;
   const r = range(period, created);
   if (created && r.prev1 && r.prev1 < created) { delete r.prev1; delete r.prev2; delete r.cut; }
   const goalsRes = await api(`/management/v1/counter/${ids}/goals`).catch(() => ({ goals: [] }));
@@ -240,6 +242,10 @@ async function load(period, c) {
     catParams: kt ? stat({ ...CAT_PARAMS, ...cur }) : null,
     catModels: kt ? stat({ dimensions: "ym:pv:title", metrics: "ym:pv:pageviews,ym:pv:users", filters: CAT_MODEL, sort: "-ym:pv:pageviews", limit: 300, ...cur }) : null,
     catModelUsers: kt ? stat({ metrics: "ym:pv:users", filters: CAT_MODEL, ...cur }) : null,
+    /* Рамбургер: параметры визитов пишет меню кафе (заказы, блюда, поиск). Шаги пути гостя: люди по первому слову параметра. */
+    rbParams: rb ? stat({ ...RB_PARAMS, ...cur }) : null,
+    rbSteps: rb ? stat({ ...RB_STEPS, ...cur }) : null,
+    rbStepsPrev: rb && old ? stat({ ...RB_STEPS, ...cutS }) : null,
     /* Каждый человек (браузер) отдельно: заходы и время. Отсюда рекорды и «сколько раз заходили». */
     people: stat({ dimensions: "ym:s:clientID", metrics: "ym:s:visits,ym:s:sumVisitDuration", sort: "-ym:s:visits", limit: 10000, ...cur }),
   };
@@ -275,6 +281,10 @@ async function load(period, c) {
   if (out.catParams || out.catModels) {
     out.cat = summarizeCatalog(out.catParams, out.catModels, out.catModelUsers);
     delete out.catParams; delete out.catModels; delete out.catModelUsers;
+  }
+  if (out.rbParams || out.rbSteps) {
+    out.rb = summarizeRb(out.rbParams, out.rbSteps, out.rbStepsPrev);
+    delete out.rbParams; delete out.rbSteps; delete out.rbStepsPrev;
   }
   return out;
 }
@@ -517,6 +527,12 @@ function render(d) {
       html.push(tag("Покупатели"), cols(funnelCard(d, users), modelsCard(d)));
       html.push(tag("Цвета"), cols(colorsCard(d), versionsCard(d)));
       html.push(tag("Поиск"), cols(searchCard(d), catSectionsCard(d)));
+    }
+    if (isRB(d)) {
+      html.push(tag("Заказы"), rbTiles(d));
+      html.push(tag("Гости"), cols(rbPathCard(d, users), rbContactCard(d)));
+      html.push(tag("Блюда"), cols(rbOrderedCard(d), rbAddedCard(d)));
+      html.push(tag("Поиск"), cols(rbSearchCard(d), rbSectionsCard(d)));
     }
     html.push(tag("Люди"), cols(recordsCard(d, users), otherGoalsCard(d, users)));
     html.push(tag("Что смотрят"), screensCard(d));
@@ -998,6 +1014,139 @@ function catSectionsCard(d) {
     <div class="bars">${rows.map((x) => barRow({ name: x.a, value: x.visits, base: rows[0].visits, note: people(x.users) })).join("")}</div></section>`;
 }
 
+/* ---------- Меню кафе «Рамбургер» ----------
+   Параметры визитов пишет само меню (js/stats.js в проекте «Рамбургер»). Имена групп совпадают с ним слово в слово.
+   «Заказ в WhatsApp»: блюдо -> размер -> «×2», без размера: блюдо -> «×2». «Добавили в корзину»: блюдо -> размер, без размера: блюдо.
+   «Поиск в меню»: слово -> «Нашли» или «Не нашли». «Сумма заказа»: число рублей. Остальные группы: одно значение.
+   Число в строке: заходы, в которых это было. */
+const RB_PARAMS = { dimensions: "ym:s:paramsLevel1,ym:s:paramsLevel2,ym:s:paramsLevel3,ym:s:paramsLevel4", metrics: "ym:s:visits,ym:s:users", sort: "-ym:s:visits", limit: 5000 };
+const RB_STEPS = { dimensions: "ym:s:paramsLevel1", metrics: "ym:s:users,ym:s:visits", limit: 50 };
+const RB_GROUPS = { "Заказ в WhatsApp": "order", "Добавили в корзину": "added", "Открыли блюдо": "opened", "Раздел меню": "section", "Поиск в меню": "search",
+  "Получение": "mode", "Сумма заказа": "sum", "Связь с кафе": "contact", "Как открыли": "launch" };
+function summarizeRb(params, steps, stepsPrev) {
+  const rb = { steps: {}, prev: stepsPrev ? {} : null };
+  for (const k of Object.values(RB_GROUPS)) rb[k] = [];
+  for (const [res, to] of [[steps, rb.steps], [stepsPrev, rb.prev]]) {
+    for (const r of res?.data || []) { const g = r.dimensions[0]?.name; if (g && to) to[g] = { users: r.metrics[0], visits: r.metrics[1] }; }
+  }
+  for (const r of params?.data || []) {
+    const [g, a, b, c] = r.dimensions.map((x) => x?.name || null); // пустой уровень: null или «»
+    const k = RB_GROUPS[g];
+    if (k && a) rb[k].push({ a, b, c, visits: r.metrics[0], users: r.metrics[1] });
+  }
+  return rb;
+}
+const rbWait = (d, title) => errCard(title, d.errors.rbParams || d.errors.rbSteps || "Данные меню ещё загружаются.");
+const rub = (n) => `${num(n)} ₽`;
+const portions = (s) => parseInt(String(s || "").replace(/\D/g, ""), 10) || 1; // «×2» -> 2
+/* Заказы по блюдам: порции всего и по размерам. Порции строки умножаем на заходы с ней. */
+function rbDishes(rb) {
+  const m = {};
+  for (const r of rb.order) {
+    const size = r.c != null ? r.b : null, q = portions(r.c != null ? r.c : r.b) * r.visits;
+    const x = (m[r.a] ||= { name: r.a, portions: 0, sizes: {} });
+    x.portions += q;
+    if (size) x.sizes[size] = (x.sizes[size] || 0) + q;
+  }
+  return Object.values(m);
+}
+
+/* Главные цифры меню: заказы, средний чек, порции, доставка. */
+function rbTiles(d) {
+  if (!d.rb) return rbWait(d, "Заказы");
+  const rb = d.rb, g = "Заказ в WhatsApp";
+  const orders = rb.steps[g]?.visits || 0, was = rb.prev ? rb.prev[g]?.visits || 0 : null;
+  const money = rb.sum.reduce((s, r) => s + (parseInt(r.a, 10) || 0) * r.visits, 0), checks = rb.sum.reduce((s, r) => s + r.visits, 0);
+  const parts = rbDishes(rb).reduce((s, x) => s + x.portions, 0);
+  const mode = Object.fromEntries(rb.mode.map((r) => [r.a, r.visits])), dl = mode["Доставка"] || 0, self = mode["С собой"] || 0;
+  return `<section class="tiles">
+    ${tile({ label: "Заказы", value: num(orders), c: was != null && change(orders, was), was: `было ${num(was)}`, sub: `на ${rub(money)}`,
+      what: "Сколько раз гости нажали «Отправить заказ в WhatsApp». Отправил ли гость само сообщение, Метрика не видит.", why: "главная цифра меню." })}
+    ${tile({ label: "Средний чек", value: rub(checks ? money / checks : 0), sub: "с доставкой",
+      what: "Сумма одного заказа в среднем, как в сообщении WhatsApp.", why: "видно, на сколько заказывают за раз." })}
+    ${tile({ label: "Порций в заказах", value: num(parts), sub: orders ? `в среднем ${avg(parts / orders)} на заказ` : "",
+      what: "Сколько порций блюд было во всех заказах вместе.", why: "видно, сколько готовить." })}
+    ${tile({ label: "Доставка", value: dl + self ? pct(dl, dl + self) : "0%", sub: `доставка ${num(dl)}, с собой ${num(self)}`,
+      what: "Доля заказов с доставкой.", why: "видно, сколько нужно курьеров." })}
+  </section>`;
+}
+
+/* Путь гостя: открыли меню, открыли блюдо, добавили, открыли корзину, нажали «Отправить». */
+function rbPathCard(d, users) {
+  const title = "Путь гостя";
+  if (!d.rb) return rbWait(d, title);
+  const s = d.rb.steps, p = d.rb.prev;
+  const step = (name, g, hint) => { const v = s[g]?.users || 0; return barRow({ name, value: v, base: users, note: pct(v, users), c: p && change(v, p[g]?.users || 0), hint }); };
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Сколько людей дошли до каждого шага. Процент от всех, кто открыл меню. Зачем: видно, на каком шаге гости уходят.</p></div></div>
+    <div class="bars">
+      ${barRow({ name: "Открыли меню", value: users, base: users, note: users ? "100%" : "", hint: "Все люди за период." })}
+      ${step("Открыли блюдо", "Открыли блюдо", "Нажали на карточку: фото, состав, размеры.")}
+      ${step("Добавили в корзину", "Добавили в корзину", "Нажали «Добавить» хотя бы у одного блюда.")}
+      ${step("Открыли корзину", "Открыли корзину", "Перешли на экран «Ваш заказ». На компьютере корзина видна сбоку, туда можно не переходить.")}
+      ${step("Нажали «Отправить в WhatsApp»", "Заказ в WhatsApp", "Открылся WhatsApp кафе с готовым заказом. Само сообщение гость отправляет сам.")}
+    </div></section>`;
+}
+
+/* Что заказывают: порции по блюдам, под блюдом размеры. */
+function rbOrderedCard(d) {
+  const title = "Что заказывают";
+  if (!d.rb) return rbWait(d, title);
+  const rows = rbDishes(d.rb).sort((a, b) => b.portions - a.portions).slice(0, 10);
+  if (!rows.length) return emptyCard(title, "За этот период заказов ещё не было. Карточка заполнится после первого заказа в WhatsApp.");
+  const sizes = (x) => Object.entries(x.sizes).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${num(v)}`).join(", ");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Сколько порций блюда было в заказах. Под блюдом с размерами: сколько какого размера. Зачем: видно, что готовить больше всего.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: x.name, value: x.portions, base: rows[0].portions, note: plural(x.portions, "порция", "порции", "порций"), hint: sizes(x) })).join("")}</div></section>`;
+}
+
+/* Что добавляют в корзину, даже если заказ потом не отправили. Справа: сколько раз открыли карточку блюда. */
+function rbAddedCard(d) {
+  const title = "Что добавляют в корзину";
+  if (!d.rb) return rbWait(d, title);
+  const added = sumBy(d.rb.added, (r) => r.a), opened = sumBy(d.rb.opened, (r) => r.a);
+  const rows = [...new Set([...Object.keys(added), ...Object.keys(opened)])]
+    .map((name) => ({ name, ad: added[name] || 0, op: opened[name] || 0 }))
+    .sort((a, b) => b.ad - a.ad || b.op - a.op).slice(0, 10);
+  if (!rows.length) return emptyCard(title, "За этот период блюда ещё не добавляли.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">В скольких заходах блюдо добавили в корзину. Справа: сколько раз открыли его карточку. Зачем: видно любимые блюда, даже если заказ не отправили.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: x.name, value: x.ad, base: Math.max(1, rows[0].ad), note: `открыли ${num(x.op)}` })).join("")}</div></section>`;
+}
+
+/* Что ищут в меню. Красная полоса: такого блюда в меню нет. */
+function rbSearchCard(d) {
+  const title = "Что ищут в меню";
+  if (!d.rb) return rbWait(d, title);
+  const rows = [...d.rb.search].sort((a, b) => b.visits - a.visits).slice(0, 10);
+  if (!rows.length) return emptyCard(title, "За этот период поиском в меню не пользовались.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Слова из поиска в меню. Красная полоса: поиск ничего не нашёл. Число: в скольких заходах. Зачем: видно, чего гости хотят, а в меню нет.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: `«${x.a}»`, value: x.visits, base: rows[0].visits, note: x.b === "Не нашли" ? "не нашли" : people(x.users), cls: x.b === "Не нашли" ? "dislike" : "" })).join("")}</div></section>`;
+}
+
+/* Разделы меню, которые нажимают: Комбо, Пицца, Роллы и другие. */
+function rbSectionsCard(d) {
+  const title = "Какие разделы нажимают";
+  if (!d.rb) return rbWait(d, title);
+  const rows = [...d.rb.section].sort((a, b) => b.visits - a.visits);
+  if (!rows.length) return emptyCard(title, "За этот период кнопки разделов не нажимали. Всё меню видно и без них.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Кнопки разделов над меню. Число: в скольких заходах нажали. Зачем: видно, за чем приходят гости.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: x.a, value: x.visits, base: rows[0].visits, note: people(x.users) })).join("")}</div></section>`;
+}
+
+/* Связь с кафе: звонки, Instagram, WhatsApp без заказа, значок меню на телефоне. */
+function rbContactCard(d) {
+  const title = "Связь с кафе";
+  if (!d.rb) return rbWait(d, title);
+  const rows = [...d.rb.contact, ...d.rb.launch.map((r) => ({ ...r, a: "Открыли со значка на телефоне" }))].sort((a, b) => b.visits - a.visits);
+  if (!rows.length) return emptyCard(title, "За этот период из меню не звонили, не открывали Instagram и не ставили меню на телефон.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Звонки, Instagram, WhatsApp без заказа и значок меню на телефоне. Число: в скольких заходах. Зачем: видно, как ещё гости выходят на кафе.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: x.a, value: x.visits, base: rows[0].visits, note: people(x.users) })).join("")}</div></section>`;
+}
+
 function errCard(title, msg) {
   return `<section class="card"><h2>${esc(title)}</h2><p class="lead">${esc(msg || "Метрика не отдала эти данные.")}</p></section>`;
 }
@@ -1018,6 +1167,9 @@ function helpCard(d) {
     <li><b>Отзывы</b>: ответ приходит вместе с целью. Число: сколько людей так ответили за период.</li>
     <li>Ученики, которые выключили «Анонимную статистику» в TanWin, в цифры не попадают.</li>` : ""}
     ${isKT(d) ? `<li><b>Модели, цвета и поиск</b> считаются по заходам: если человек два раза выбрал один цвет за один заход, это один раз. Эти данные присылает сам сайт каталога.</li>` : ""}
+    ${isRB(d) ? `<li><b>Заказ</b> в меню «Рамбургер»: гость нажал «Отправить заказ в WhatsApp». Отправил ли он само сообщение, Метрика не видит: сверяй с WhatsApp кафе.</li>
+    <li><b>Блюда, суммы и поиск</b> присылает само меню и считает по заходам: одно и то же нажатие два раза за один заход считается один раз. Адрес, время и пожелания гостей в Метрику не уходят.</li>
+    <li>Свой телефон не считать: открыть меню с <b>#ne-schitat</b> в конце адреса. Вернуть: <b>#schitat</b>.</li>` : ""}
     <li>Данные приходят из Яндекс.Метрики с опозданием в несколько минут.</li>
   </ul></details>
   <div class="foot"><span>Счётчик ${d.counter.id}</span>${installEvt ? `<button class="btn ghost" type="button" id="install">Поставить значок на устройство</button>` : ""}<button class="link-btn" type="button" id="logout">Отключить ключ на этом устройстве</button></div></section>`;
