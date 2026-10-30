@@ -5,6 +5,7 @@
 const TANWIN = 113307386; // счётчик TanWin: у него свои карточки (путь ученика, разделы, «Ещё»)
 const KATALOG = 113761734; // счётчик каталога техники: свои карточки (путь покупателя, модели, цвета, поиск)
 const RAMBURGER = 113827061; // счётчик меню кафе «Рамбургер»: свои карточки (заказы, блюда, путь гостя, поиск)
+const VALARG = 113926697; // счётчик доски «Услуги Валарга»: свои карточки (связь, виды работ, объявления, поиск)
 const CLIENT_ID = "3657b17d5af3451b88e8e4331486f614"; // приложение «Статистика TanWin» на oauth.yandex.ru, Яндекс возвращает ключ на адрес сайта
 const AUTH_URL = `https://oauth.yandex.ru/authorize?response_type=token&client_id=${CLIENT_ID}`;
 const API = "https://api-metrika.yandex.net";
@@ -126,6 +127,7 @@ function screenName(t) {
 const isTW = (d) => d.counter?.id === TANWIN;
 const isKT = (d) => d.counter?.id === KATALOG;
 const isRB = (d) => d.counter?.id === RAMBURGER;
+const isVL = (d) => d.counter?.id === VALARG;
 
 /* ---------- API Метрики ---------- */
 class AuthError extends Error {}
@@ -200,7 +202,7 @@ const ANSWERS = { dimensions: "ym:s:paramsLevel1,ym:s:paramsLevel2", metrics: "y
 
 async function load(period, c) {
   TZ = c.tz || TZ;
-  const created = c.created, ids = c.id, tw = ids === TANWIN, kt = ids === KATALOG, rb = ids === RAMBURGER;
+  const created = c.created, ids = c.id, tw = ids === TANWIN, kt = ids === KATALOG, rb = ids === RAMBURGER, vl = ids === VALARG;
   const r = range(period, created);
   if (created && r.prev1 && r.prev1 < created) { delete r.prev1; delete r.prev2; delete r.cut; }
   const goalsRes = await api(`/management/v1/counter/${ids}/goals`).catch(() => ({ goals: [] }));
@@ -232,7 +234,7 @@ async function load(period, c) {
     goalPrev: old && goalTotals(goals, cutS),
     sources: stat({ dimensions: "ym:s:lastTrafficSource", metrics: "ym:s:users", sort: "-ym:s:users", limit: 7, ...cur }),
     devices: stat({ dimensions: "ym:s:deviceCategory", metrics: "ym:s:users", sort: "-ym:s:users", limit: 5, ...cur }),
-    screens: stat({ ...SCREENS, ...cur }),
+    screens: vl ? null : stat({ ...SCREENS, ...cur }), // у доски экраны считаются по адресу: VL_SCREENS
     screensPrev: tw && old ? stat({ ...SCREENS, ...cutPv() }) : null,
     more: tw ? stat({ ...SCREENS, ...cur, filters: FROM_MORE }) : null,
     morePrev: tw && old ? stat({ ...SCREENS, ...cutPv(FROM_MORE) }) : null,
@@ -246,6 +248,20 @@ async function load(period, c) {
     rbParams: rb ? stat({ ...RB_PARAMS, ...cur }) : null,
     rbSteps: rb ? stat({ ...RB_STEPS, ...cur }) : null,
     rbStepsPrev: rb && old ? stat({ ...RB_STEPS, ...cutS }) : null,
+    /* Доска «Услуги Валарга»: параметры визитов пишет сама доска (связь, виды работ, объявления). Отдельно: кто связался, мастер, поиск. */
+    vlParams: vl ? stat({ ...VL_PARAMS, ...cur }) : null,
+    vlParamsPrev: vl && old ? stat({ ...VL_PARAMS, ...cutS }) : null,
+    vlSteps: vl ? stat({ ...VL_STEPS, ...cur }) : null,
+    vlStepsPrev: vl && old ? stat({ ...VL_STEPS, ...cutS }) : null,
+    vlTalk: vl ? stat({ metrics: "ym:s:users,ym:s:visits", filters: VL_TALK, ...cur }) : null,
+    vlTalkPrev: vl && old ? stat({ metrics: "ym:s:users,ym:s:visits", ...cutS, filters: `${cutS.filters} AND ${VL_TALK}` }) : null,
+    ...Object.fromEntries(vl ? VL_SCREENS.flatMap(([, f], i) => [
+      [`vlScreen${i}`, stat({ metrics: "ym:pv:users,ym:pv:pageviews", filters: f, ...cur })],
+      [`vlScreenPrev${i}`, old ? stat({ metrics: "ym:pv:users,ym:pv:pageviews", ...cutPv(f) }) : null],
+    ]) : []),
+    vlEngines: vl ? stat({ ...VL_ENGINES, ...cur }) : null,
+    vlEnginesPrev: vl && old ? stat({ ...VL_ENGINES, ...cutS, filters: `${cutS.filters} AND ${VL_ORGANIC}` }) : null,
+    vlPhrases: vl ? stat({ ...VL_PHRASES, ...cur }) : null,
     /* Каждый человек (браузер) отдельно: заходы и время. Отсюда рекорды и «сколько раз заходили». */
     people: stat({ dimensions: "ym:s:clientID", metrics: "ym:s:visits,ym:s:sumVisitDuration", sort: "-ym:s:visits", limit: 10000, ...cur }),
   };
@@ -285,6 +301,10 @@ async function load(period, c) {
   if (out.rbParams || out.rbSteps) {
     out.rb = summarizeRb(out.rbParams, out.rbSteps, out.rbStepsPrev);
     delete out.rbParams; delete out.rbSteps; delete out.rbStepsPrev;
+  }
+  if (vl) {
+    out.vl = summarizeVl(out);
+    for (const k of Object.keys(out)) if (k.startsWith("vl") && k !== "vl") delete out[k];
   }
   return out;
 }
@@ -534,8 +554,14 @@ function render(d) {
       html.push(tag("Блюда"), cols(rbOrderedCard(d), rbAddedCard(d)));
       html.push(tag("Поиск"), cols(rbSearchCard(d), rbSectionsCard(d)));
     }
+    if (isVL(d)) {
+      html.push(tag("Доска"), vlTiles(d));
+      html.push(tag("Жители"), cols(vlPathCard(d, users), vlContactCard(d)));
+      html.push(tag("Объявления"), cols(vlKindsCard(d), vlPostsCard(d)));
+      html.push(tag("Поиск"), cols(vlEnginesCard(d, users), vlPhrasesCard(d)));
+    }
     html.push(tag("Люди"), cols(recordsCard(d, users), otherGoalsCard(d, users)));
-    html.push(tag("Что смотрят"), screensCard(d));
+    html.push(tag("Что смотрят"), isVL(d) ? vlScreensCard(d, users) : screensCard(d));
   }
   html.push(tag("Откуда"), cols(listCard("Откуда приходят", "Последний источник перед заходом. Зачем: видно, какая реклама и какие ссылки работают.", d.sources),
     listCard("С чего заходят", `Телефон, планшет или компьютер. Зачем: под что в первую очередь делать ${d.counter.name} удобным.`, d.devices)));
@@ -1147,6 +1173,195 @@ function rbContactCard(d) {
     <div class="bars">${rows.map((x) => barRow({ name: x.a, value: x.visits, base: rows[0].visits, note: people(x.users) })).join("")}</div></section>`;
 }
 
+/* ---------- Доска «Услуги Валарга» ----------
+   Параметры визитов пишет сама доска (js/stats.js в проекте «Услуги Валарга»). Имена групп совпадают с ним слово в слово.
+   «Связь»: «WhatsApp», «Позвонить» или «Написать админу» -> экран. «Вид работ»: название вида или «Все» -> экран.
+   «Объявления»: «Отправили» или «Защита остановила» -> «Услуга» или «Работа». Число в строке: заходы, в которых это было. */
+const VL_PARAMS = { dimensions: "ym:s:paramsLevel1,ym:s:paramsLevel2,ym:s:paramsLevel3", metrics: "ym:s:visits,ym:s:users", sort: "-ym:s:visits", limit: 2000 };
+const VL_STEPS = { dimensions: "ym:s:paramsLevel1", metrics: "ym:s:users,ym:s:visits", limit: 50 };
+const VL_GROUPS = { "Связь": "contact", "Вид работ": "kind", "Объявления": "post" };
+const VL_TALK = "ym:s:paramsLevel2=.('WhatsApp','Позвонить')"; // связались с мастером или жителем: эти слова есть только в группе «Связь»
+const VL_ORGANIC = "ym:s:lastTrafficSource=='organic'"; // пришли из поисковика
+const VL_ENGINES = { dimensions: "ym:s:lastSearchEngineRoot", metrics: "ym:s:users,ym:s:visits", filters: VL_ORGANIC, sort: "-ym:s:users", limit: 10 };
+const VL_PHRASES = { dimensions: "ym:s:lastSearchPhrase", metrics: "ym:s:users,ym:s:visits", filters: VL_ORGANIC, sort: "-ym:s:users", limit: 30 };
+/* Кнопки связи в том порядке, в каком их видит житель. */
+const VL_CONTACT = [
+  ["WhatsApp", "Открыли WhatsApp мастера или жителя. Сообщение человек пишет сам."],
+  ["Позвонить", "Нажали номер телефона."],
+  ["Написать админу", "Открыли WhatsApp админа доски."],
+];
+/* Экраны доски по адресу (Метрика хранит адрес вместе с частью после #): так виден и первый экран при входе.
+   Адреса совпадают с ROUTES в js/app.js доски. Старый адрес #/zayavki ведёт на «Работу». */
+const VL_SCREENS = [
+  ["Услуги", "ym:pv:URL!~'#/.'", "Витрина мастеров: работы и цены. Сюда попадает каждый, кто открыл адрес доски."],
+  ["Работа", "ym:pv:URL=~'#/(rabota|zayavki)'", "Работа, которую предлагают жители."],
+  ["Мастер", "ym:pv:URL=@'#/m/'", "Страница одного мастера: все работы и цены. Сюда ведут и ссылки из WhatsApp."],
+  ["Разместить", "ym:pv:URL=~'#/(razmestit|gotovo)'", "Подача объявления и экран «Готово»."],
+  ["Мои", "ym:pv:URL=@'#/moi'", "Свои объявления жителя."],
+];
+function summarizeVl(o) {
+  const groups = (res) => {
+    const t = { contact: [], kind: [], post: [] };
+    for (const r of res?.data || []) {
+      const [g, a, b] = r.dimensions.map((x) => x?.name || null);
+      const k = VL_GROUPS[g];
+      if (k && a) t[k].push({ a, b, visits: r.metrics[0], users: r.metrics[1] });
+    }
+    return t;
+  };
+  const steps = (res) => res ? Object.fromEntries((res.data || []).filter((r) => r.dimensions[0]?.name).map((r) => [r.dimensions[0].name, { users: r.metrics[0], visits: r.metrics[1] }])) : null;
+  const sum = (res) => res ? { users: totals(res)[0] || 0, visits: totals(res)[1] || 0 } : null; // люди в итоге без повторов; у экранов второе число: открытия
+  const rows = (res) => (res?.data || []).map((r) => ({ name: r.dimensions[0]?.name || null, users: r.metrics[0], visits: r.metrics[1] }));
+  return {
+    now: groups(o.vlParams), prev: o.vlParamsPrev ? groups(o.vlParamsPrev) : null,
+    steps: steps(o.vlSteps) || {}, stepsPrev: steps(o.vlStepsPrev),
+    talk: sum(o.vlTalk), talkPrev: sum(o.vlTalkPrev),
+    screens: VL_SCREENS.map((_, i) => sum(o[`vlScreen${i}`])), screensPrev: o.vlScreenPrev0 ? VL_SCREENS.map((_, i) => sum(o[`vlScreenPrev${i}`])) : null,
+    search: sum(o.vlEngines), searchPrev: sum(o.vlEnginesPrev), engines: rows(o.vlEngines),
+    phrases: rows(o.vlPhrases), phrasesUsers: totals(o.vlPhrases)[0] || 0, // люди со скрытыми словами в ответ не попадают
+  };
+}
+const vlWait = (d, title, key = "vlParams") => errCard(title, d.errors[key] || "Данные доски ещё загружаются.");
+/* Сумма заходов по кнопке (a) и, если дано, по второму слову (b): экрану или виду объявления. */
+const vlSum = (list, a, b) => (list || []).filter((r) => r.a === a && (b == null || r.b === b)).reduce((s, r) => s + r.visits, 0);
+/* На каких экранах нажимали: «Мастер» 5, «Работа» 2. */
+function vlWhere(list, a) {
+  const m = {};
+  for (const r of list) if (r.a === a && r.b) m[r.b] = (m[r.b] || 0) + r.visits;
+  const s = Object.entries(m).sort((x, y) => y[1] - x[1]).map(([k, v]) => `«${k}» ${num(v)}`).join(", ");
+  return s ? `Экраны: ${s}.` : "";
+}
+
+/* Главные цифры доски: связались, объявления, из поиска, защита. */
+function vlTiles(d) {
+  if (!d.vl) return vlWait(d, "Доска");
+  const v = d.vl, n = v.now, p = v.prev;
+  const sent = vlSum(n.post, "Отправили"), sentWas = p ? vlSum(p.post, "Отправили") : null;
+  const stop = vlSum(n.post, "Защита остановила"), stopWas = p ? vlSum(p.post, "Защита остановила") : null;
+  const talk = v.talk?.users || 0, found = v.search?.users || 0;
+  const eng = Object.fromEntries(v.engines.map((x) => [x.name, x.users]));
+  return `<section class="tiles">
+    ${tile({ label: "Связались", value: num(talk), c: v.talkPrev && change(talk, v.talkPrev.users), was: `было ${num(v.talkPrev?.users)}`, sub: `WhatsApp ${num(vlSum(n.contact, "WhatsApp"))}, звонок ${num(vlSum(n.contact, "Позвонить"))}`,
+      what: "Сколько людей нажали WhatsApp или «Позвонить» у мастера или у работы. Написал ли человек и дозвонился ли, Метрика не видит.", why: "главная цифра доски: жители находят друг друга." })}
+    ${tile({ label: "Объявления", value: num(sent), c: p && change(sent, sentWas), was: `было ${num(sentWas)}`, sub: `услуг ${num(vlSum(n.post, "Отправили", "Услуга"))}, работ ${num(vlSum(n.post, "Отправили", "Работа"))}`,
+      what: "Сколько объявлений жители отправили на проверку.", why: "видно, растёт ли доска." })}
+    ${tile({ label: "Из поиска", value: num(found), c: v.searchPrev && change(found, v.searchPrev.users), was: `было ${num(v.searchPrev?.users)}`, sub: v.search ? `Яндекс ${num(eng["Яндекс"])}, Google ${num(eng["Google"])}` : "Метрика не отдала эти данные",
+      what: "Сколько людей нашли доску в поисковике и пришли на неё.", why: "видно, работает ли открытие доски поисковикам." })}
+    ${tile({ label: "Защита остановила", value: num(stop), c: p && change(stop, stopWas, true), was: `было ${num(stopWas)}`, sub: "второе объявление за сутки",
+      what: "Сколько раз защита не пустила второе объявление с одного телефона за сутки.", why: "видно, пытаются ли засорять доску." })}
+  </section>`;
+}
+
+/* Что делают на доске: люди, которые хотя бы раз сделали шаг. Шаги идут не строго по порядку. */
+function vlPathCard(d, users) {
+  const title = "Что делают на доске";
+  if (!d.vl) return vlWait(d, title);
+  const v = d.vl, all = prevTotals(d);
+  const scr = (i) => v.screens[i]?.users || 0, old = (i) => v.screensPrev ? v.screensPrev[i]?.users || 0 : null;
+  const sentUsers = (t) => t.post.filter((r) => r.a === "Отправили").reduce((s, r) => s + r.users, 0);
+  const row = (name, value, was, hint) => barRow({ name, value, base: users, note: pct(value, users), c: was != null && change(value, was), hint });
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Сколько людей сделали это хотя бы раз. Процент от всех, кто открыл доску. Шаги идут не строго по порядку: позвонить можно прямо из списка. Зачем: видно, до чего люди доходят, а до чего нет.</p></div></div>
+    <div class="bars">
+      ${row("Открыли доску", users, all ? all[0] : null, "Все люди за период.")}
+      ${row("Выбрали вид работ", v.steps["Вид работ"]?.users || 0, v.stepsPrev ? v.stepsPrev["Вид работ"]?.users || 0 : null, "Нажали кнопку над списком: «Сварка», «Электрика», «Такси» и другие.")}
+      ${row("Открыли страницу мастера", scr(2), old(2), "Все работы и цены одного мастера. Сюда ведут и ссылки из WhatsApp.")}
+      ${row("Нажали WhatsApp или «Позвонить»", v.talk?.users || 0, v.talkPrev ? v.talkPrev.users : null, "Связались с мастером или с тем, кто предлагает работу.")}
+      ${row("Открыли «Разместить»", scr(3), old(3), "Экран, где жители подают объявление.")}
+      ${row("Отправили объявление", sentUsers(v.now), v.prev ? sentUsers(v.prev) : null, "Нажали «Отправить на проверку».")}
+    </div></section>`;
+}
+
+/* Связь: WhatsApp, «Позвонить», «Написать админу». Под строкой: на каких экранах нажали. */
+function vlContactCard(d) {
+  const title = "Связь";
+  if (!d.vl || d.errors.vlParams) return vlWait(d, title);
+  const n = d.vl.now.contact, p = d.vl.prev?.contact;
+  const keys = [...new Set([...VL_CONTACT.map(([k]) => k), ...n.map((r) => r.a)])];
+  const rows = keys.map((k) => ({ name: k, hint: VL_CONTACT.find(([x]) => x === k)?.[1] || "", v: vlSum(n, k), was: p ? vlSum(p, k) : null, where: vlWhere(n, k) }));
+  if (!rows.some((x) => x.v)) return emptyCard(title, "За этот период никто не нажал WhatsApp, «Позвонить» или «Написать админу».");
+  const max = Math.max(...rows.map((x) => x.v));
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Сколько раз нажали каждую кнопку связи. Под строкой: на каком экране. Число: в скольких заходах. Зачем: видно, где люди решают связаться.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: x.name, value: x.v, base: max, c: x.was != null && change(x.v, x.was), hint: [x.hint, x.where].filter(Boolean).join(" ") })).join("")}</div></section>`;
+}
+
+/* Какие виды работ нажимают над списком. «Все» (снять выбор) идёт строкой внизу карточки. */
+function vlKindsCard(d) {
+  const title = "Какие виды работ ищут";
+  if (!d.vl || d.errors.vlParams) return vlWait(d, title);
+  const n = d.vl.now.kind, p = d.vl.prev?.kind, reset = vlSum(n, "Все");
+  const rows = [...new Set(n.map((r) => r.a))].filter((a) => a !== "Все")
+    .map((a) => ({ a, v: vlSum(n, a), was: p ? vlSum(p, a) : null, s: vlSum(n, a, "Услуги"), w: vlSum(n, a, "Работа") }))
+    .sort((x, y) => y.v - x.v).slice(0, 12);
+  if (!rows.length) return emptyCard(title, "За этот период кнопки видов работ не нажимали. Все объявления видны и без них.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Кнопки видов работ над списком. Число: в скольких заходах нажали. Под строкой: на «Услугах» (ищут мастера) и на «Работе» (ищут работу). Зачем: видно, каких мастеров ищут в селе.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: x.a, value: x.v, base: rows[0].v, c: x.was != null && change(x.v, x.was), hint: `На «Услугах» ${num(x.s)}, на «Работе» ${num(x.w)}.` })).join("")}</div>
+    ${reset ? `<p class="note card-foot">Кнопку «Все» (снова показать всё) нажимали в ${num(reset)} ${plural(reset, "заходе", "заходах", "заходах")}.</p>` : ""}</section>`;
+}
+
+/* Объявления: отправили на проверку и остановила защита (красная полоса). */
+function vlPostsCard(d) {
+  const title = "Объявления";
+  if (!d.vl || d.errors.vlParams) return vlWait(d, title);
+  const n = d.vl.now.post, p = d.vl.prev?.post;
+  const rows = [
+    ["Отправили", "Услуга", "Отправили услугу", "Мастер подал объявление о своей работе."],
+    ["Отправили", "Работа", "Отправили работу", "Житель предложил работу."],
+    ["Защита остановила", "Услуга", "Защита остановила услугу", "Второе объявление об услуге с одного телефона за сутки.", true],
+    ["Защита остановила", "Работа", "Защита остановила работу", "Второе объявление о работе с одного телефона за сутки.", true],
+  ].map(([a, b, name, hint, bad]) => ({ name, hint, bad, v: vlSum(n, a, b), was: p ? vlSum(p, a, b) : null }));
+  if (!rows.some((x) => x.v)) return emptyCard(title, "За этот период объявлений не отправляли.");
+  const max = Math.max(...rows.map((x) => x.v));
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Сколько раз жители нажали «Отправить на проверку». Красная полоса: защита не пустила второе объявление за сутки. Число: в скольких заходах. Зачем: видно, кто пополняет доску, мастера или те, кто ищет работника.</p></div></div>
+    <div class="bars">${rows.map((x) => barRow({ name: x.name, value: x.v, base: max, c: x.was != null && change(x.v, x.was, x.bad), hint: x.hint, cls: x.bad ? "dislike" : "" })).join("")}</div></section>`;
+}
+
+/* Из каких поисковиков приходят. Первая строка: все из поиска, процент от всех людей. */
+function vlEnginesCard(d, users) {
+  const title = "Из каких поисковиков";
+  if (!d.vl?.search) return vlWait(d, title, "vlEngines");
+  const v = d.vl, total = v.search.users;
+  if (!v.engines.length) return emptyCard(title, "За этот период из поиска никто не пришёл. Доску открыли поисковикам 30 октября. Новый сайт появляется в поиске не сразу: обычно через несколько дней или недель.");
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Сколько людей нашли доску в поисковике и пришли на неё. Процент от всех, кто пришёл из поиска. Зачем: видно, где доску находят лучше.</p></div></div>
+    <div class="bars">${barRow({ name: "Всего из поиска", value: total, base: total, note: `${pct(total, users)} всех`, c: v.searchPrev && change(total, v.searchPrev.users), hint: "Процент от всех, кто открыл доску." })}
+    ${v.engines.map((x) => barRow({ name: x.name || "Другие", value: x.users, base: total, note: pct(x.users, total) })).join("")}</div></section>`;
+}
+
+/* По каким словам находят. Слова, которые поисковик не передал, идут одной строкой «Слова скрыты». */
+function vlPhrasesCard(d) {
+  const title = "По каким словам находят";
+  if (!d.vl?.search || d.errors.vlPhrases) return vlWait(d, title, d.errors.vlPhrases ? "vlPhrases" : "vlEngines");
+  const v = d.vl, open = v.phrases.filter((x) => x.name && x.name !== "Не определено").slice(0, 10);
+  /* Людей без слов Метрика в ответ не кладёт: их число = все из поиска минус люди со словами. */
+  const hidden = Math.max(0, v.search.users - v.phrasesUsers) + v.phrases.filter((x) => !x.name || x.name === "Не определено").reduce((s, x) => s + x.users, 0);
+  if (!open.length && !hidden) return emptyCard(title, "Слов пока нет: из поиска на доску ещё никто не пришёл.");
+  const max = Math.max(hidden, ...open.map((x) => x.users));
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Что человек написал в поисковике перед тем, как прийти на доску. Число: сколько людей. Зачем: видно, что ищут жители и какие слова есть смысл добавить на доску.</p></div></div>
+    <div class="bars">${open.map((x) => barRow({ name: `«${x.name}»`, value: x.users, base: max, note: plural(x.users, "человек", "человека", "человек") })).join("")}
+    ${hidden ? barRow({ name: "Слова скрыты", value: hidden, base: max, note: plural(hidden, "человек", "человека", "человек"), hint: "Поисковик не передал слова. Google прячет почти все, Яндекс часть." }) : ""}</div>
+    <p class="note card-foot">Все запросы, по которым доску показывали в поиске, есть в Яндекс Вебмастере, раздел «Поисковые запросы».</p></section>`;
+}
+
+/* Экраны доски: сколько людей открыли каждый экран, вместе с первым экраном при входе. */
+function vlScreensCard(d, users) {
+  const title = "Экраны доски";
+  const bad = Object.keys(d.errors).find((k) => k.startsWith("vlScreen"));
+  if (!d.vl || bad) return vlWait(d, title, bad);
+  const v = d.vl;
+  const rows = VL_SCREENS.map(([name, , hint], i) => {
+    const x = v.screens[i] || { users: 0, visits: 0 }, was = v.screensPrev?.[i];
+    return barRow({ name, value: x.users, base: users, note: pct(x.users, users), c: was && change(x.users, was.users), hint: `${hint} Открывали ${times(x.visits)}.` });
+  });
+  return `<section class="card"><div class="card-head"><div><h2>${title}</h2>
+    <p class="lead">Сколько людей открыли каждый экран, вместе с первым экраном при входе. Процент от всех, кто открыл доску. Зачем: видно, какие разделы нужны жителям.</p></div></div>
+    <div class="bars">${rows.join("")}</div></section>`;
+}
+
 function errCard(title, msg) {
   return `<section class="card"><h2>${esc(title)}</h2><p class="lead">${esc(msg || "Метрика не отдала эти данные.")}</p></section>`;
 }
@@ -1170,6 +1385,10 @@ function helpCard(d) {
     ${isRB(d) ? `<li><b>Заказ</b> в меню «Рамбургер»: гость нажал «Отправить заказ в WhatsApp». Отправил ли он само сообщение, Метрика не видит: сверяй с WhatsApp кафе.</li>
     <li><b>Блюда, суммы и поиск</b> присылает само меню и считает по заходам: одно и то же нажатие два раза за один заход считается один раз. Адрес, время и пожелания гостей в Метрику не уходят.</li>
     <li>Свой телефон не считать: открыть меню с <b>#ne-schitat</b> в конце адреса. Вернуть: <b>#schitat</b>.</li>` : ""}
+    ${isVL(d) ? `<li><b>Связь, виды работ и объявления</b> присылает сама доска и считает по заходам: одно и то же нажатие два раза за один заход считается один раз. Имена, номера и тексты объявлений в Метрику не уходят.</li>
+    <li><b>Связались</b>: нажали WhatsApp или «Позвонить». Написал ли человек и дозвонился ли, Метрика не видит.</li>
+    <li><b>Из поиска</b>: последний источник перед заходом был поисковик. Слова поисковики передают не всегда: такие люди в строке «Слова скрыты».</li>
+    <li>Роботы поисковиков и твои собственные заходы в цифры не попадают.</li>` : ""}
     <li>Данные приходят из Яндекс.Метрики с опозданием в несколько минут.</li>
   </ul></details>
   <div class="foot"><span>Счётчик ${d.counter.id}</span>${installEvt ? `<button class="btn ghost" type="button" id="install">Поставить значок на устройство</button>` : ""}<button class="link-btn" type="button" id="logout">Отключить ключ на этом устройстве</button></div></section>`;
